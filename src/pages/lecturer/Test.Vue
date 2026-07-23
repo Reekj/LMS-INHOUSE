@@ -1468,7 +1468,7 @@ function scheduleTest() {
   }
 
   .question-row {
-    grid-template-columns: 36px 1fr;
+    grid-template-columns: 38px 1fr;
   }
 
   .edit-btn,
