@@ -135,9 +135,20 @@ function toggleMenu(path) {
   openMenus[path] = !openMenus[path];
 }
 
+import { onMounted } from "vue";
+
 function isParentActive(item) {
   return item.children?.some((child) => route.path.startsWith(child.path));
 }
+
+onMounted(() => {
+  if (auth.userRole === "lecturer" && auth.user) {
+    lecturerCoursesStore.fetchCoursesFromDB(auth.user.name);
+  }
+  if (auth.userRole === "student" && auth.user) {
+    studentStore.fetchStudentDataFromDB(auth.user.id, auth.user.enrolledCourses);
+  }
+});
 </script>
 
 <style scoped>

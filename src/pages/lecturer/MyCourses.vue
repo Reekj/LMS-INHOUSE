@@ -92,23 +92,79 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 
 import AppModal from "../../components/common/AppModal.vue";
-import { useLecturerCoursesStore } from "../../stores/lecturerCourses.store";
+import { useAuthStore } from "../../stores/auth.store";
 import { useLecturerWorkspaceStore } from "../../stores/lecturerWorkspace.store";
+import { useLecturerCoursesStore } from "../../stores/lecturerCourses.store";
+import { getCourses, editCourse } from "../../api/course.api";
+import { getAllUsers } from "../../api/user.api";
 
 const router = useRouter();
-const lecturerCoursesStore = useLecturerCoursesStore();
+const authStore = useAuthStore();
 const workspaceStore = useLecturerWorkspaceStore();
+const lecturerCoursesStore = useLecturerCoursesStore();
 
 const isAssignModalOpen = ref(false);
 const selectedCourseId = ref("");
 const formError = ref("");
+const loading = ref(false);
+const allCoursesList = ref([]);
+const allUsersList = ref([]);
 
-const assignedCourses = computed(() => lecturerCoursesStore.lecturerCourses);
-const unassignedCourses = computed(() => lecturerCoursesStore.getUnassignedCourses());
+const mapCourseForUI = (c, allUsers) => {
+  const studentCount = allUsers.filter(u => 
+    u.role === "student" && 
+    Array.isArray(u.enrolledCourses) && 
+    u.enrolledCourses.includes(c._id)
+  ).length;
+
+  const themes = ["purple", "orange", "blue", "green"];
+  const themeIndex = Math.abs(c.courseCode.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0)) % themes.length;
+
+  return {
+    id: c._id,
+    code: c.courseCode,
+    title: c.title,
+    units: c.units || 3,
+    students: studentCount,
+    theme: themes[themeIndex],
+  };
+};
+
+const assignedCourses = computed(() => {
+  const lecturerName = authStore.user?.name || "";
+  const filtered = allCoursesList.value.filter(c => c.lecturer === lecturerName);
+  return filtered.map(c => mapCourseForUI(c, allUsersList.value));
+});
+
+const unassignedCourses = computed(() => {
+  const lecturerName = authStore.user?.name || "";
+  const filtered = allCoursesList.value.filter(c => c.lecturer !== lecturerName);
+  return filtered.map(c => mapCourseForUI(c, allUsersList.value));
+});
+
+async function fetchCoursesData() {
+  loading.value = true;
+  try {
+    const [coursesRes, usersRes] = await Promise.all([
+      getCourses(),
+      getAllUsers()
+    ]);
+    allCoursesList.value = coursesRes.data.courses || [];
+    allUsersList.value = usersRes.data.users || [];
+  } catch (err) {
+    console.error("Failed to fetch courses data:", err);
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(() => {
+  fetchCoursesData();
+});
 
 function coursePendingCount(courseId) {
   return workspaceStore
@@ -136,19 +192,59 @@ function closeAssignModal() {
   isAssignModalOpen.value = false;
 }
 
-function handleAssignCourse() {
-  const result = lecturerCoursesStore.assignCourse(selectedCourseId.value);
-
-  if (!result.success) {
-    formError.value = result.message;
+async function handleAssignCourse() {
+  if (!selectedCourseId.value) {
+    formError.value = "Please select a course.";
     return;
   }
 
-  closeAssignModal();
+  const selectedCourse = allCoursesList.value.find(c => c._id === selectedCourseId.value);
+  if (!selectedCourse) {
+    formError.value = "Course not found.";
+    return;
+  }
+
+  try {
+    const payload = {
+      courseCode: selectedCourse.courseCode,
+      title: selectedCourse.title,
+      department: selectedCourse.department || "Computer Science",
+      lecturer: authStore.user?.name,
+      level: selectedCourse.level || "100L",
+      status: selectedCourse.status || "active"
+    };
+    await editCourse(selectedCourse._id, payload);
+    await fetchCoursesData();
+    lecturerCoursesStore.fetchCoursesFromDB(authStore.user?.name);
+    closeAssignModal();
+  } catch (err) {
+    console.error("Failed to register course:", err);
+    formError.value = err.response?.data?.error || err.message || "Failed to register course.";
+  }
 }
 
-function removeCourse(courseId) {
-  lecturerCoursesStore.removeCourse(courseId);
+async function removeCourse(courseId) {
+  const selectedCourse = allCoursesList.value.find(c => c._id === courseId);
+  if (!selectedCourse) return;
+
+  if (confirm(`Are you sure you want to unregister ${selectedCourse.courseCode}?`)) {
+    try {
+      const payload = {
+        courseCode: selectedCourse.courseCode,
+        title: selectedCourse.title,
+        department: selectedCourse.department || "Computer Science",
+        lecturer: "Not Assigned",
+        level: selectedCourse.level || "100L",
+        status: selectedCourse.status || "active"
+      };
+      await editCourse(selectedCourse._id, payload);
+      await fetchCoursesData();
+      lecturerCoursesStore.fetchCoursesFromDB(authStore.user?.name);
+    } catch (err) {
+      console.error("Failed to unregister course:", err);
+      alert(err.response?.data?.error || err.message || "Failed to unregister course.");
+    }
+  }
 }
 </script>
 

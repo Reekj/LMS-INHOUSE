@@ -149,15 +149,23 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, onMounted } from "vue";
 import { CalendarDays, Clock3, MapPin } from "lucide-vue-next";
 
 import { useStudentStore } from "../../stores/student.store";
+import { useAuthStore } from "../../stores/auth.store";
 
 const studentStore = useStudentStore();
+const authStore = useAuthStore();
 
 const viewMode = ref("month");
 const selectedEvent = ref(null);
+
+onMounted(async () => {
+  if (import.meta.env.VITE_API_URL && authStore.user) {
+    await studentStore.fetchStudentDataFromDB(authStore.user.id, authStore.user.enrolledCourses);
+  }
+});
 
 const weekDays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 

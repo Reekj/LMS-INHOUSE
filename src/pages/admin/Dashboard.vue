@@ -13,24 +13,24 @@
     <div class="stats-grid">
       <StatCard
         title="Total Students"
-        value="3,847"
-        subtitle="↑ 12% vs last semester"
+        :value="studentCount.toString()"
+        subtitle="Enrolled student profiles"
         :icon="Users"
         color="blue"
       />
 
       <StatCard
         title="Active Lecturers"
-        value="142"
-        subtitle="↑ 3 new this semester"
+        :value="lecturerCount.toString()"
+        subtitle="Registered teaching staff"
         :icon="GraduationCap"
         color="purple"
       />
 
       <StatCard
         title="Total Courses"
-        value="285"
-        subtitle="Across 11 Faculties"
+        :value="courseCount.toString()"
+        subtitle="Academic course catalog"
         :icon="BookOpen"
         color="green"
       />
@@ -191,16 +191,16 @@
             Target Audience
           </label>
 
-          <select>
-            <option>
+          <select v-model="broadcastForm.targetAudience">
+            <option value="all">
               All Users
             </option>
 
-            <option>
+            <option value="student">
               Students
             </option>
 
-            <option>
+            <option value="lecturer">
               Lecturers
             </option>
           </select>
@@ -212,6 +212,7 @@
           </label>
 
           <input
+            v-model.trim="broadcastForm.title"
             placeholder="e.g Important maintenance notice"
           />
         </div>
@@ -222,20 +223,29 @@
           </label>
 
           <textarea
+            v-model.trim="broadcastForm.content"
             rows="5"
             placeholder="Write your announcement here..."
           />
         </div>
 
+        <p v-if="broadcastError" style="color: #ef4444; font-size: 13px; margin: 10px 0 10px; font-weight: 700;">
+          {{ broadcastError }}
+        </p>
+
         <div class="modal-actions">
           <AppButton
             variant="secondary"
+            :disabled="isSubmitting"
             @click="showBroadcast = false"
           >
             Cancel
           </AppButton>
 
-          <AppButton>
+          <AppButton
+            :disabled="isSubmitting"
+            @click="submitBroadcast"
+          >
             Send
           </AppButton>
         </div>
@@ -245,7 +255,7 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
+import { ref, reactive, onMounted } from "vue";
 
 import {
   Users,
@@ -259,73 +269,226 @@ import AppTable from "../../components/tables/AppTable.vue";
 import AppModal from "../../components/common/AppModal.vue";
 import AppButton from "../../components/common/AppButton.vue";
 import AppBadge from "../../components/common/AppBadge.vue";
+import { createBroadcast, getBroadcasts } from "../../api/broadcast.api";
+import { getDashboardStats } from "../../api/stats.api";
+import { getAllUsers } from "../../api/user.api";
+import { getCourses } from "../../api/course.api";
 
-const showBroadcast = ref(false);
+const studentCount = ref(3847);
+const lecturerCount = ref(142);
+const courseCount = ref(285);
 
-const faculties = [
+const faculties = ref([
   {
     name: "Science, Eng & Technology",
-    students: "1,240",
-    courses: 96,
-    adoption: 82,
+    students: "0",
+    courses: 0,
+    adoption: 100,
     color: "green",
   },
   {
     name: "Management & Social Sci.",
-    students: "820",
-    courses: 64,
-    adoption: 73,
+    students: "0",
+    courses: 0,
+    adoption: 100,
     color: "orange",
   },
   {
     name: "Health Sciences",
-    students: "640",
-    courses: 52,
-    adoption: 81,
+    students: "0",
+    courses: 0,
+    adoption: 100,
     color: "green",
   },
   {
     name: "Humanities & Culture",
-    students: "520",
-    courses: 42,
-    adoption: 73,
+    students: "0",
+    courses: 0,
+    adoption: 100,
     color: "orange",
   },
-  {
-    name: "Agriculture",
-    students: "360",
-    courses: 18,
-    adoption: 73,
-    color: "orange",
-  },
-];
+]);
 
-const activities = [
-  {
-    title:
-      "Dr. Folake Adesanya uploaded Week 9 — Concurrency Notes to CSC 322",
-    time: "2m ago",
-    color: "orange",
-  },
-  {
-    title:
-      "48 new students enrolled via the portal today",
-    time: "1h ago",
-    color: "green",
-  },
-  {
-    title:
-      "Prof. Taiwo Akinwale published CSC 412 final exam schedule",
-    time: "5h ago",
-    color: "purple",
-  },
-  {
-    title:
-      "File storage at 78% capacity",
-    time: "6h ago",
-    color: "red",
-  },
-];
+const activities = ref([]);
+
+onMounted(async () => {
+  if (import.meta.env.VITE_API_URL) {
+    try {
+      const [statsRes, usersRes, coursesRes, broadcastsRes] = await Promise.all([
+        getDashboardStats(),
+        getAllUsers(),
+        getCourses(),
+        getBroadcasts()
+      ]);
+
+      if (statsRes.data && statsRes.data.success) {
+        studentCount.value = statsRes.data.data.students || 0;
+        lecturerCount.value = statsRes.data.data.lecturers || 0;
+        courseCount.value = statsRes.data.data.courses || 0;
+      }
+
+      // Calculate real Faculty stats based on user list and course list
+      const users = usersRes.data.users || [];
+      const courses = coursesRes.data.courses || [];
+
+      const facultyDepartments = {
+        "Science, Eng & Technology": [
+          "Computer Science",
+          "Electrical Engineering",
+          "Mechanical Engineering",
+          "Mathematics",
+          "Physics",
+        ],
+        "Management & Social Sci.": [
+          "Accounting",
+          "Business Administration",
+          "Economics",
+          "Political Science",
+        ],
+        "Health Sciences": [
+          "Nursing",
+          "Medicine",
+          "Public Health",
+          "Anatomy",
+        ],
+        "Humanities & Culture": [
+          "History",
+          "English",
+          "Linguistics",
+          "French",
+        ],
+        "ICT": [
+          "ICT"
+        ]
+      };
+
+      const getFacultyFromDept = (dept) => {
+        for (const [fac, depts] of Object.entries(facultyDepartments)) {
+          if (depts.includes(dept)) return fac;
+        }
+        return "Science, Eng & Technology";
+      };
+
+      const facCounts = {
+        "Science, Eng & Technology": { students: 0, courses: 0 },
+        "Management & Social Sci.": { students: 0, courses: 0 },
+        "Health Sciences": { students: 0, courses: 0 },
+        "Humanities & Culture": { students: 0, courses: 0 },
+        "ICT": { students: 0, courses: 0 }
+      };
+
+      users.forEach(u => {
+        if (u.role === "student" && u.department) {
+          const fac = getFacultyFromDept(u.department);
+          if (facCounts[fac]) facCounts[fac].students++;
+        }
+      });
+
+      courses.forEach(c => {
+        if (c.department) {
+          const fac = getFacultyFromDept(c.department);
+          if (facCounts[fac]) facCounts[fac].courses++;
+        }
+      });
+
+      faculties.value = Object.keys(facCounts).map(facName => {
+        const sCount = facCounts[facName].students;
+        const cCount = facCounts[facName].courses;
+        const adopt = sCount > 0 ? Math.min(100, Math.round((cCount / sCount) * 100)) : (cCount > 0 ? 100 : 0);
+        return {
+          name: facName,
+          students: sCount.toString(),
+          courses: cCount,
+          adoption: adopt || 100,
+          color: adopt > 75 ? "green" : "orange"
+        };
+      });
+
+      // Populate real activities from Broadcasts
+      const list = [];
+      const broadcasts = broadcastsRes.data.broadcasts || [];
+      broadcasts.slice(0, 4).forEach(b => {
+        list.push({
+          title: `Broadcast dispatched: "${b.title}"`,
+          time: new Date(b.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          color: b.targetAudience === "all" ? "green" : "purple"
+        });
+      });
+
+      if (list.length === 0) {
+        list.push({
+          title: "System initialized. No recent activities recorded.",
+          time: "Just now",
+          color: "blue"
+        });
+      }
+      activities.value = list;
+
+    } catch (err) {
+      console.error("Failed to load dashboard metrics:", err);
+    }
+  } else {
+    // Offline local fallback defaults
+    activities.value = [
+      { title: "SSO server health check passed", time: "1h ago", color: "green" },
+      { title: "Database backup completed successfully", time: "6h ago", color: "blue" }
+    ];
+  }
+});
+
+const showBroadcast = ref(false);
+const isSubmitting = ref(false);
+const broadcastError = ref("");
+
+const broadcastForm = reactive({
+  targetAudience: "all",
+  title: "",
+  content: "",
+});
+
+async function submitBroadcast() {
+  if (!broadcastForm.title || !broadcastForm.content) {
+    broadcastError.value = "Title and content are required.";
+    return;
+  }
+
+  broadcastError.value = "";
+  isSubmitting.value = true;
+
+  try {
+    await createBroadcast({
+      title: broadcastForm.title,
+      content: broadcastForm.content,
+      targetAudience: broadcastForm.targetAudience,
+    });
+
+    // Reset and close
+    broadcastForm.title = "";
+    broadcastForm.content = "";
+    broadcastForm.targetAudience = "all";
+    showBroadcast.value = false;
+
+    // Refresh dashboard activities list to show new broadcast
+    if (import.meta.env.VITE_API_URL) {
+      const broadcastsRes = await getBroadcasts();
+      const list = [];
+      const broadcasts = broadcastsRes.data.broadcasts || [];
+      broadcasts.slice(0, 4).forEach(b => {
+        list.push({
+          title: `Broadcast dispatched: "${b.title}"`,
+          time: new Date(b.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          color: b.targetAudience === "all" ? "green" : "purple"
+        });
+      });
+      activities.value = list;
+    }
+  } catch (err) {
+    console.error("Failed to send broadcast:", err);
+    broadcastError.value = err.response?.data?.error || err.message || "Failed to send broadcast message.";
+  } finally {
+    isSubmitting.value = false;
+  }
+}
 </script>
 
 <style scoped>

@@ -6,7 +6,7 @@
         <p class="page-subtitle">Manage students, lecturers, and administrators</p>
       </div>
 
-      <AppButton @click="openAddUser">Add User</AppButton>
+      <AppButton v-if="authStore.userRole === 'admin'" @click="openAddUser">Add User</AppButton>
     </div>
 
     <div class="filters-card">
@@ -21,8 +21,8 @@
         <AppSelect v-model="roleFilter">
           <option value="">All Roles</option>
           <option value="Student">Student</option>
-          <option value="Lecturer">Lecturer</option>
-          <option value="Admin">Admin</option>
+          <option v-if="authStore.userRole === 'admin'" value="Lecturer">Lecturer</option>
+          <option v-if="authStore.userRole === 'admin'" value="Admin">Admin</option>
         </AppSelect>
 
         <AppSelect v-model="facultyFilter">
@@ -40,7 +40,7 @@
         <tr>
           <th>Name</th>
           <th>Role</th>
-          <th>Faculty</th>
+          <th>Faculty & Department</th>
           <th>Status</th>
           <th>Last Login</th>
           <th>Actions</th>
@@ -63,7 +63,10 @@
           </td>
 
           <td>{{ user.role }}</td>
-          <td>{{ user.faculty }}</td>
+          <td>
+            <div style="font-weight: 800; color: #1e293b; font-size: 13.5px;">{{ user.department }}</div>
+            <div style="font-size: 11.5px; color: #64748b; margin-top: 1px;">{{ user.faculty }}</div>
+          </td>
 
           <td>
             <AppBadge :type="user.status === 'Active' ? 'success' : 'danger'">
@@ -116,6 +119,7 @@
                 class="form-input"
                 maxlength="40"
                 autocomplete="off"
+                :disabled="authStore.userRole !== 'admin'"
               />
             </label>
 
@@ -132,7 +136,7 @@
 
             <label class="form-label">
               Role
-              <select v-model="userForm.role" class="form-select">
+              <select v-model="userForm.role" class="form-select" :disabled="authStore.userRole !== 'admin'">
                 <option>Student</option>
                 <option>Lecturer</option>
                 <option>Admin</option>
@@ -141,11 +145,21 @@
 
             <label class="form-label">
               Faculty
-              <select v-model="userForm.faculty" class="form-select">
-                <option>Science, Eng & Technology</option>
-                <option>Management & Social Sci.</option>
-                <option>Health Sciences</option>
-                <option>Humanities & Culture</option>
+              <select v-model="userForm.faculty" class="form-select" @change="onFacultyChange">
+                <option value="">Select Faculty</option>
+                <option v-for="(deps, fac) in facultyDepartments" :key="fac" :value="fac">
+                  {{ fac }}
+                </option>
+              </select>
+            </label>
+
+            <label class="form-label">
+              Department
+              <select v-model="userForm.department" class="form-select" :disabled="!userForm.faculty">
+                <option value="">Select Department</option>
+                <option v-for="dep in selectableDepartments" :key="dep" :value="dep">
+                  {{ dep }}
+                </option>
               </select>
             </label>
 
@@ -154,8 +168,7 @@
               <input
                 v-model.trim="userForm.lastLogin"
                 class="form-input"
-                maxlength="40"
-                autocomplete="off"
+                disabled
               />
             </label>
           </div>
@@ -166,7 +179,7 @@
               <span>{{ userForm.isActive ? "Active" : "Inactive" }}</span>
             </div>
 
-            <AppToggle v-model="userForm.isActive" />
+            <AppToggle v-model="userForm.isActive" :disabled="authStore.userRole !== 'admin'" />
           </div>
 
           <p v-if="formError" class="form-error">{{ formError }}</p>
@@ -187,7 +200,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, onMounted } from "vue";
 
 import AppBadge from "../../components/common/AppBadge.vue";
 import AppButton from "../../components/common/AppButton.vue";
@@ -196,7 +209,10 @@ import AppSearch from "../../components/common/AppSearch.vue";
 import AppSelect from "../../components/common/AppSelect.vue";
 import AppToggle from "../../components/common/AppToggle.vue";
 import AppTable from "../../components/tables/AppTable.vue";
+import { getAllUsers, createUser, updateUser } from "../../api/user.api";
+import { useAuthStore } from "../../stores/auth.store";
 
+const authStore = useAuthStore();
 const search = ref("");
 const roleFilter = ref("");
 const facultyFilter = ref("");
@@ -205,62 +221,152 @@ const modalMode = ref("add");
 const editingUserId = ref(null);
 const formError = ref("");
 
-const users = ref([
-  {
-    id: 1,
-    name: "Adebayo Johnson",
-    identifier: "UNIOSUN/CSC/20/001",
-    email: "adebayo@student.edu",
-    role: "Student",
-    faculty: "Science, Eng & Technology",
-    status: "Active",
-    isActive: true,
-    lastLogin: "Today, 09:32",
-  },
-  {
-    id: 2,
-    name: "Dr. Folake Adesanya",
-    identifier: "STAFF001",
-    email: "folake@uniosun.edu.ng",
-    role: "Lecturer",
-    faculty: "Science, Eng & Technology",
-    status: "Active",
-    isActive: true,
-    lastLogin: "Yesterday, 16:08",
-  },
-  {
-    id: 3,
-    name: "Sola Adeyemi",
-    identifier: "ADM001",
-    email: "sola@uniosun.edu.ng",
-    role: "Admin",
-    faculty: "ICT",
-    status: "Active",
-    isActive: true,
-    lastLogin: "Today, 11:21",
-  },
-  {
-    id: 4,
-    name: "Kehinde Adebisi",
-    identifier: "UNIOSUN/ACC/21/044",
-    email: "kehinde@student.edu",
-    role: "Student",
-    faculty: "Management & Social Sci.",
-    status: "Inactive",
-    isActive: false,
-    lastLogin: "2 weeks ago",
-  },
-]);
+const users = ref([]);
+
+const facultyDepartments = {
+  "Science, Eng & Technology": [
+    "Computer Science",
+    "Electrical Engineering",
+    "Mechanical Engineering",
+    "Mathematics",
+    "Physics",
+  ],
+  "Management & Social Sci.": [
+    "Accounting",
+    "Business Administration",
+    "Economics",
+    "Political Science",
+  ],
+  "Health Sciences": [
+    "Nursing",
+    "Medicine",
+    "Public Health",
+    "Anatomy",
+  ],
+  "Humanities & Culture": [
+    "History",
+    "English",
+    "Linguistics",
+    "French",
+  ],
+  "ICT": [
+    "ICT"
+  ]
+};
+
+function getFacultyFromDepartment(department) {
+  for (const [faculty, deps] of Object.entries(facultyDepartments)) {
+    if (deps.includes(department)) {
+      return faculty;
+    }
+  }
+  return "Science, Eng & Technology"; // Default fallback
+}
+
+onMounted(async () => {
+  if (import.meta.env.VITE_API_URL) {
+    try {
+      const res = await getAllUsers();
+      if (res.data && res.data.users) {
+        let rawUsers = res.data.users;
+        if (authStore.userRole === "lecturer") {
+          rawUsers = rawUsers.filter(u => u.role === "student" || u._id === authStore.user.id);
+        } else if (authStore.userRole === "admin") {
+          rawUsers = rawUsers.filter(u => u.role === "student" || u.role === "lecturer");
+        }
+        users.value = rawUsers.map(u => ({
+          id: u._id,
+          name: u.name,
+          identifier: u.identifier,
+          email: u.email,
+          role: u.role ? u.role.charAt(0).toUpperCase() + u.role.slice(1) : "Student",
+          faculty: getFacultyFromDepartment(u.department),
+          department: u.department || "General",
+          status: u.status === "active" ? "Active" : "Inactive",
+          isActive: u.status === "active",
+          lastLogin: u.lastActive ? new Date(u.lastActive).toLocaleDateString() : "Never"
+        }));
+      }
+    } catch (err) {
+      console.error("Failed to load users from API:", err);
+    }
+  } else {
+    // Mock data fallback if offline
+    users.value = [
+      {
+        id: 1,
+        name: "Adebayo Johnson",
+        identifier: "UNIOSUN/CSC/20/001",
+        email: "adebayo@student.edu",
+        role: "Student",
+        faculty: "Science, Eng & Technology",
+        department: "Computer Science",
+        status: "Active",
+        isActive: true,
+        lastLogin: "Today, 09:32",
+      },
+      {
+        id: 2,
+        name: "Dr. Folake Adesanya",
+        identifier: "STAFF001",
+        email: "folake@uniosun.edu.ng",
+        role: "Lecturer",
+        faculty: "Science, Eng & Technology",
+        department: "Computer Science",
+        status: "Active",
+        isActive: true,
+        lastLogin: "Yesterday, 16:08",
+      },
+      {
+        id: 3,
+        name: "Sola Adeyemi",
+        identifier: "ADM001",
+        email: "sola@uniosun.edu.ng",
+        role: "Admin",
+        faculty: "ICT",
+        department: "ICT",
+        status: "Active",
+        isActive: true,
+        lastLogin: "Today, 11:21",
+      },
+      {
+        id: 4,
+        name: "Kehinde Adebisi",
+        identifier: "UNIOSUN/ACC/21/044",
+        email: "kehinde@student.edu",
+        role: "Student",
+        faculty: "Management & Social Sci.",
+        department: "Accounting",
+        status: "Inactive",
+        isActive: false,
+        lastLogin: "2 weeks ago",
+      },
+    ];
+  }
+});
 
 const userForm = reactive({
   name: "",
   identifier: "",
   email: "",
   role: "Student",
-  faculty: "Science, Eng & Technology",
+  faculty: "",
+  department: "",
   lastLogin: "Never",
   isActive: true,
 });
+
+const selectableDepartments = computed(() => {
+  if (!userForm.faculty) return [];
+  return facultyDepartments[userForm.faculty] || [];
+});
+
+function onFacultyChange() {
+  const departments = facultyDepartments[userForm.faculty] || [];
+  if (!departments.includes(userForm.department)) {
+    userForm.department = "";
+  }
+}
 
 const filteredUsers = computed(() => {
   const query = search.value.trim().toLowerCase();
@@ -289,7 +395,8 @@ function resetForm() {
     identifier: "",
     email: "",
     role: "Student",
-    faculty: "Science, Eng & Technology",
+    faculty: "",
+    department: "",
     lastLogin: "Never",
     isActive: true,
   });
@@ -315,6 +422,7 @@ function openEditUser(user) {
     email: user.email,
     role: user.role,
     faculty: user.faculty,
+    department: user.department,
     lastLogin: user.lastLogin,
     isActive: user.isActive,
   });
@@ -333,6 +441,8 @@ function validateUserForm() {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userForm.email)) {
     return "Enter a valid email address.";
   }
+  if (!userForm.faculty) return "Faculty selection is required.";
+  if (!userForm.department) return "Department selection is required.";
 
   return "";
 }
@@ -344,13 +454,14 @@ function buildPayload() {
     email: sanitizeText(userForm.email).toLowerCase(),
     role: sanitizeText(userForm.role),
     faculty: sanitizeText(userForm.faculty),
+    department: sanitizeText(userForm.department),
     lastLogin: sanitizeText(userForm.lastLogin) || "Never",
     isActive: Boolean(userForm.isActive),
     status: userForm.isActive ? "Active" : "Inactive",
   };
 }
 
-function handleSaveUser() {
+async function handleSaveUser() {
   const error = validateUserForm();
 
   if (error) {
@@ -360,20 +471,73 @@ function handleSaveUser() {
 
   const payload = buildPayload();
 
-  if (modalMode.value === "edit") {
-    users.value = users.value.map((user) =>
-      user.id === editingUserId.value
-        ? { ...user, ...payload }
-        : user
-    );
-  } else {
-    users.value.unshift({
-      id: Date.now(),
-      ...payload,
-    });
-  }
+  if (import.meta.env.VITE_API_URL) {
+    try {
+      if (modalMode.value === "edit") {
+        const backendPayload = {
+          name: payload.name,
+          email: payload.email,
+          identifier: payload.identifier,
+          role: payload.role.toLowerCase(),
+          department: payload.department,
+          status: payload.isActive ? "active" : "suspended"
+        };
+        await updateUser(editingUserId.value, backendPayload);
+      } else {
+        const backendPayload = {
+          name: payload.name,
+          identifier: payload.identifier,
+          email: payload.email,
+          password: "Password123", // default temporary password
+          role: payload.role.toLowerCase(),
+          department: payload.department
+        };
+        await createUser(backendPayload);
+      }
 
-  closeModal();
+      // Re-fetch users to keep the table fully synced with DB
+      const res = await getAllUsers();
+      if (res.data && res.data.users) {
+        let rawUsers = res.data.users;
+        if (authStore.userRole === "lecturer") {
+          rawUsers = rawUsers.filter(u => u.role === "student" || u._id === authStore.user.id);
+        } else if (authStore.userRole === "admin") {
+          rawUsers = rawUsers.filter(u => u.role === "student" || u.role === "lecturer");
+        }
+        users.value = rawUsers.map(u => ({
+          id: u._id,
+          name: u.name,
+          identifier: u.identifier,
+          email: u.email,
+          role: u.role ? u.role.charAt(0).toUpperCase() + u.role.slice(1) : "Student",
+          faculty: getFacultyFromDepartment(u.department),
+          department: u.department || "General",
+          status: u.status === "active" ? "Active" : "Inactive",
+          isActive: u.status === "active",
+          lastLogin: u.lastActive ? new Date(u.lastActive).toLocaleDateString() : "Never"
+        }));
+      }
+      closeModal();
+    } catch (err) {
+      console.error("Failed to save user:", err);
+      formError.value = err.response?.data?.error || err.message || "Failed to save user details.";
+    }
+  } else {
+    // Fallback local mutation mode
+    if (modalMode.value === "edit") {
+      users.value = users.value.map((user) =>
+        user.id === editingUserId.value
+          ? { ...user, ...payload }
+          : user
+      );
+    } else {
+      users.value.unshift({
+        id: Date.now(),
+        ...payload,
+      });
+    }
+    closeModal();
+  }
 }
 
 function getInitials(name) {

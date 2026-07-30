@@ -735,6 +735,8 @@ import AssignmentGradingView from "../../pages/lecturer/AssignmentGradingView.vu
 import { useLecturerCoursesStore } from "../../stores/lecturerCourses.store";
 import { useLecturerMaterialsStore } from "../../stores/lecturerMaterials.store";
 import { useLecturerWorkspaceStore } from "../../stores/lecturerWorkspace.store";
+import { uploadMaterial, getMaterialDownloadUrl } from "../../api/course.api";
+import { useAuthStore } from "../../stores/auth.store";
 
 const route = useRoute();
 const router = useRouter();
@@ -744,6 +746,7 @@ const videoRef = ref(null);
 const coursesStore = useLecturerCoursesStore();
 const materialsStore = useLecturerMaterialsStore();
 const workspaceStore = useLecturerWorkspaceStore();
+const authStore = useAuthStore();
 
 const materialTypes = [
   "Lecture Notes (PDF)",
@@ -786,9 +789,61 @@ const activeCourse = computed(() => {
 
 const activeSection = computed(() => String(route.params.section || "materials").toLowerCase());
 
-const courseMaterials = computed(() => materialsStore.getMaterialsByCourse(activeCourse.value?.id));
-const courseVideos = computed(() => materialsStore.getVideosByCourse(activeCourse.value?.id));
-const recentUploads = computed(() => materialsStore.getRecentUploadsByCourse(activeCourse.value?.id));
+const getFileTypeFromName = (name, category = "") => {
+  const ext = String(name || "").split(".").pop()?.toLowerCase();
+  if (category === "Video Lectures") return "mp4";
+  if (ext === "pdf") return "pdf";
+  if (["ppt", "pptx"].includes(ext)) return "pptx";
+  if (["doc", "docx"].includes(ext)) return "docx";
+  if (ext === "mp4") return "mp4";
+  if (ext === "zip") return "zip";
+  return "file";
+};
+
+const mapDBMaterialForUI = (m) => {
+  return {
+    id: m._id || m.s3Key,
+    courseId: activeCourse.value?.id,
+    title: m.title,
+    description: m.description || "",
+    category: m.category || "Lecture Notes (PDF)",
+    type: getFileTypeFromName(m.fileName || m.title, m.category),
+    week: m.week || 10,
+    date: m.uploadedAt ? new Date(m.uploadedAt).toLocaleDateString() : "Today",
+    size: m.size || "1.2 MB",
+    allowDownload: m.allowDownload !== false,
+    fileName: m.fileName || "document.pdf",
+    mimeType: m.mimeType || "",
+    duration: m.duration || "00:00",
+    s3Key: m.s3Key
+  };
+};
+
+const dbMaterials = computed(() => {
+  const rawList = activeCourse.value?.materials || [];
+  return rawList.map(mapDBMaterialForUI);
+});
+
+const courseMaterials = computed(() => {
+  if (import.meta.env.VITE_API_URL) {
+    return dbMaterials.value.filter(m => m.category !== "Video Lectures" && m.type !== "mp4");
+  }
+  return materialsStore.getMaterialsByCourse(activeCourse.value?.id);
+});
+
+const courseVideos = computed(() => {
+  if (import.meta.env.VITE_API_URL) {
+    return dbMaterials.value.filter(m => m.category === "Video Lectures" || m.type === "mp4");
+  }
+  return materialsStore.getVideosByCourse(activeCourse.value?.id);
+});
+
+const recentUploads = computed(() => {
+  if (import.meta.env.VITE_API_URL) {
+    return dbMaterials.value.slice(0, 4);
+  }
+  return materialsStore.getRecentUploadsByCourse(activeCourse.value?.id);
+});
 
 const courseAssignments = computed(() =>
   workspaceStore.getAssignmentsByCourse(activeCourse.value?.id)
@@ -1123,7 +1178,20 @@ function formatDueDate(assignment) {
   return `${assignment.dueDate} ${assignment.dueTime || ""}`.trim();
 }
 
-function openPreview(material) {
+async function openPreview(material) {
+  if (import.meta.env.VITE_API_URL && material.s3Key && !material.fileUrl) {
+    try {
+      const res = await getMaterialDownloadUrl(material.s3Key);
+      if (res.data && res.data.downloadUrl) {
+        material.fileUrl = res.data.downloadUrl;
+      }
+    } catch (err) {
+      console.error("Failed to load pre-signed preview URL:", err);
+      formError.value = "Failed to load document preview.";
+      return;
+    }
+  }
+
   if (!material.fileUrl) {
     formError.value = "Preview unavailable for this file.";
     return;
@@ -1132,15 +1200,33 @@ function openPreview(material) {
   previewMaterial.value = material;
 }
 
-function downloadMaterial(material) {
-  if (!material?.allowDownload || !material?.fileUrl) return;
+async function downloadMaterial(material) {
+  if (!material?.allowDownload) return;
 
-  const link = document.createElement("a");
-  link.href = material.fileUrl;
-  link.download = material.fileName || material.title;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  if (import.meta.env.VITE_API_URL && material.s3Key) {
+    try {
+      const res = await getMaterialDownloadUrl(material.s3Key, true);
+      if (res.data && res.data.downloadUrl) {
+        const link = document.createElement("a");
+        link.href = res.data.downloadUrl;
+        link.download = material.fileName || material.title;
+        link.target = "_blank";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch (err) {
+      console.error("Failed to get download URL:", err);
+      alert("Failed to download file. Please try again.");
+    }
+  } else if (material.fileUrl) {
+    const link = document.createElement("a");
+    link.href = material.fileUrl;
+    link.download = material.fileName || material.title;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
 }
 
 function removeMaterial(materialId) {
@@ -1341,7 +1427,7 @@ function loadDraft() {
   Object.assign(form, draft);
 }
 
-function publish() {
+async function publish() {
   const error = validateForm();
 
   if (error) {
@@ -1349,18 +1435,77 @@ function publish() {
     return;
   }
 
-  const material = materialsStore.addMaterial(buildPayload());
+  if (import.meta.env.VITE_API_URL && form.file) {
+    try {
+      formError.value = "";
+      const formData = new FormData();
+      formData.append("material", form.file);
+      formData.append("title", form.title);
+      formData.append("description", form.description);
+      formData.append("category", form.category);
+      formData.append("week", form.week);
+      formData.append("size", form.fileSize);
+      formData.append("allowDownload", form.allowDownload);
+      formData.append("fileName", form.fileName);
+      formData.append("mimeType", form.mimeType);
+      formData.append("duration", form.duration);
 
-  if (material.type === "mp4" || material.category === "Video Lectures") {
-    selectedVideo.value = material;
+      await uploadMaterial(activeCourse.value.code, formData);
+      await coursesStore.fetchCoursesFromDB(authStore.user?.name);
+
+      const isVideo = form.category === "Video Lectures" || fileTypeFromName(form.fileName) === "mp4";
+      resetForm();
+
+      if (isVideo) {
+        router.push(`/lecturer/courses/${activeCourse.value.id}/videos`);
+      } else {
+        router.push(`/lecturer/courses/${activeCourse.value.id}/materials`);
+      }
+    } catch (err) {
+      console.error("Failed to upload material:", err);
+      formError.value = err.response?.data?.error || err.message || "Failed to upload material.";
+    }
+  } else {
+    const material = materialsStore.addMaterial(buildPayload());
+
+    if (material.type === "mp4" || material.category === "Video Lectures") {
+      selectedVideo.value = material;
+      resetForm();
+      router.push(`/lecturer/courses/${material.courseId}/videos`);
+      return;
+    }
+
     resetForm();
-    router.push(`/lecturer/courses/${material.courseId}/videos`);
-    return;
+    router.push(`/lecturer/courses/${material.courseId}/materials`);
   }
-
-  resetForm();
-  router.push(`/lecturer/courses/${material.courseId}/materials`);
 }
+
+watch(
+  () => route.params.courseId,
+  async (newCourseId) => {
+    if (newCourseId && authStore.user?.name) {
+      await coursesStore.fetchCoursesFromDB(authStore.user.name);
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  selectedVideo,
+  async (newVideo) => {
+    if (newVideo && newVideo.s3Key && !newVideo.fileUrl) {
+      try {
+        const res = await getMaterialDownloadUrl(newVideo.s3Key);
+        if (res.data && res.data.downloadUrl) {
+          newVideo.fileUrl = res.data.downloadUrl;
+        }
+      } catch (err) {
+        console.error("Failed to load pre-signed video URL:", err);
+      }
+    }
+  },
+  { immediate: true }
+);
 </script>
 
 <style scoped>

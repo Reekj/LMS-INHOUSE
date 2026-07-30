@@ -63,7 +63,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, onMounted } from "vue";
 import {
   BarChart3,
   FileText,
@@ -72,23 +72,59 @@ import {
 } from "lucide-vue-next";
 
 import { useStudentStore } from "../../stores/student.store";
+import { getBroadcasts } from "../../api/broadcast.api";
 
 const studentStore = useStudentStore();
 
 const filters = ["All", "Unread", "Assignments & Tests", "Grades", "Announcement"];
 const activeFilter = ref("All");
 const visibleLimit = ref(4);
+const broadcasts = ref([]);
+
+onMounted(async () => {
+  if (import.meta.env.VITE_API_URL) {
+    try {
+      const res = await getBroadcasts();
+      if (res.data && res.data.broadcasts) {
+        broadcasts.value = res.data.broadcasts;
+      }
+    } catch (err) {
+      console.error("Failed to load broadcasts:", err);
+    }
+  }
+});
+
+const mappedBroadcasts = computed(() => {
+  return broadcasts.value.map(b => ({
+    id: b._id,
+    type: "announcement",
+    category: "Announcement",
+    courseCode: "SYSTEM",
+    courseTitle: "Administrative Announcement",
+    title: b.title,
+    meta: `${new Date(b.createdAt).toLocaleDateString()} at ${new Date(b.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${b.content}`,
+    popupMeta: `${new Date(b.createdAt).toLocaleDateString()}`,
+    actionLabel: "",
+    unread: true,
+    accent: "red"
+  }));
+});
+
+const combinedNotifications = computed(() => {
+  return [...mappedBroadcasts.value, ...studentStore.notifications];
+});
 
 const filteredNotifications = computed(() => {
+  const allList = combinedNotifications.value;
   if (activeFilter.value === "All") {
-    return studentStore.notifications;
+    return allList;
   }
 
   if (activeFilter.value === "Unread") {
-    return studentStore.notifications.filter((item) => item.unread);
+    return allList.filter((item) => item.unread);
   }
 
-  return studentStore.notifications.filter(
+  return allList.filter(
     (item) => item.category === activeFilter.value
   );
 });
@@ -98,7 +134,10 @@ const visibleNotifications = computed(() =>
 );
 
 function markRead(notificationId) {
-  studentStore.markNotificationRead(notificationId);
+  // If it is a local notification, mark it read in the store
+  if (typeof notificationId === "string" && notificationId.startsWith("not-")) {
+    studentStore.markNotificationRead(notificationId);
+  }
 }
 
 function loadMore() {

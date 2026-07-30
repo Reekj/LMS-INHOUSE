@@ -40,7 +40,7 @@
       <thead>
         <tr>
           <th>Course</th>
-          <th>Faculty</th>
+          <th>Faculty & Department</th>
           <th>Lecturer</th>
           <th>Level</th>
           <th>Students</th>
@@ -58,7 +58,10 @@
             </div>
           </td>
 
-          <td>{{ course.faculty }}</td>
+          <td>
+            <div style="font-weight: 800; color: #1e293b; font-size: 13.5px;">{{ course.department }}</div>
+            <div style="font-size: 11.5px; color: #64748b; margin-top: 1px;">{{ course.faculty }}</div>
+          </td>
           <td>{{ course.lecturer }}</td>
           <td>{{ course.level }}</td>
           <td>{{ course.students }}</td>
@@ -117,22 +120,32 @@
 
             <label class="form-label">
               Faculty
-              <select v-model="courseForm.faculty" class="form-select">
-                <option>Science, Eng & Technology</option>
-                <option>Management & Social Sci.</option>
-                <option>Health Sciences</option>
-                <option>Humanities & Culture</option>
+              <select v-model="courseForm.faculty" class="form-select" @change="onFacultyChange">
+                <option value="">Select Faculty</option>
+                <option v-for="(deps, fac) in facultyDepartments" :key="fac" :value="fac">
+                  {{ fac }}
+                </option>
+              </select>
+            </label>
+
+            <label class="form-label">
+              Department
+              <select v-model="courseForm.department" class="form-select" :disabled="!courseForm.faculty">
+                <option value="">Select Department</option>
+                <option v-for="dep in selectableDepartments" :key="dep" :value="dep">
+                  {{ dep }}
+                </option>
               </select>
             </label>
 
             <label class="form-label">
               Lecturer
-              <input
-                v-model.trim="courseForm.lecturer"
-                class="form-input"
-                maxlength="80"
-                autocomplete="off"
-              />
+              <select v-model="courseForm.lecturer" class="form-select">
+                <option value="">Select Lecturer</option>
+                <option v-for="lec in lecturers" :key="lec.id" :value="lec.name">
+                  {{ lec.name }}
+                </option>
+              </select>
             </label>
 
             <label class="form-label">
@@ -184,7 +197,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, onMounted } from "vue";
 
 import AppBadge from "../../components/common/AppBadge.vue";
 import AppButton from "../../components/common/AppButton.vue";
@@ -193,6 +206,8 @@ import AppSearch from "../../components/common/AppSearch.vue";
 import AppSelect from "../../components/common/AppSelect.vue";
 import AppToggle from "../../components/common/AppToggle.vue";
 import AppTable from "../../components/tables/AppTable.vue";
+import { getCourses, createCourse, editCourse } from "../../api/course.api";
+import { getAllUsers } from "../../api/user.api";
 
 const search = ref("");
 const facultyFilter = ref("");
@@ -202,51 +217,150 @@ const modalMode = ref("add");
 const editingCourseId = ref(null);
 const formError = ref("");
 
-const courses = ref([
-  {
-    id: 1,
-    code: "CSC 322",
-    title: "Operating Systems",
-    faculty: "Science, Eng & Technology",
-    lecturer: "Dr. Folake Adesanya",
-    level: "300",
-    students: 214,
-    status: "Active",
-    isActive: true,
-  },
-  {
-    id: 2,
-    code: "CSC 412",
-    title: "Computer Networks",
-    faculty: "Science, Eng & Technology",
-    lecturer: "Prof. Taiwo Akinwale",
-    level: "400",
-    students: 173,
-    status: "Active",
-    isActive: true,
-  },
-  {
-    id: 3,
-    code: "ACC 201",
-    title: "Financial Accounting",
-    faculty: "Management & Social Sci.",
-    lecturer: "Dr. Ibrahim Yusuf",
-    level: "200",
-    students: 118,
-    status: "Draft",
-    isActive: false,
-  },
-]);
+const courses = ref([]);
+const lecturers = ref([]);
+
+const facultyDepartments = {
+  "Science, Eng & Technology": [
+    "Computer Science",
+    "Electrical Engineering",
+    "Mechanical Engineering",
+    "Mathematics",
+    "Physics",
+  ],
+  "Management & Social Sci.": [
+    "Accounting",
+    "Business Administration",
+    "Economics",
+    "Political Science",
+  ],
+  "Health Sciences": [
+    "Nursing",
+    "Medicine",
+    "Public Health",
+    "Anatomy",
+  ],
+  "Humanities & Culture": [
+    "History",
+    "English",
+    "Linguistics",
+    "French",
+  ],
+  "ICT": [
+    "ICT"
+  ]
+};
+
+function getFacultyFromDepartment(department) {
+  for (const [faculty, deps] of Object.entries(facultyDepartments)) {
+    if (deps.includes(department)) {
+      return faculty;
+    }
+  }
+  return "Science, Eng & Technology"; // Default fallback
+}
+
+onMounted(async () => {
+  if (import.meta.env.VITE_API_URL) {
+    try {
+      const res = await getCourses();
+      if (res.data && res.data.courses) {
+        courses.value = res.data.courses.map(c => ({
+          id: c._id,
+          code: c.courseCode,
+          title: c.title,
+          faculty: getFacultyFromDepartment(c.department),
+          department: c.department || "General",
+          lecturer: c.lecturer || "Not Assigned",
+          level: c.level || "300",
+          students: c.students || 0,
+          status: c.status === "Active" ? "Active" : "Draft",
+          isActive: c.status === "Active"
+        }));
+      }
+    } catch (err) {
+      console.error("Failed to load courses from API:", err);
+    }
+
+    try {
+      const userRes = await getAllUsers();
+      if (userRes.data && userRes.data.users) {
+        lecturers.value = userRes.data.users.filter(u => u.role === "lecturer");
+      }
+    } catch (err) {
+      console.error("Failed to load lecturers:", err);
+    }
+  } else {
+    // Mock data fallback if offline
+    courses.value = [
+      {
+        id: 1,
+        code: "CSC 322",
+        title: "Operating Systems",
+        faculty: "Science, Eng & Technology",
+        department: "Computer Science",
+        lecturer: "Dr. Folake Adesanya",
+        level: "300",
+        students: 214,
+        status: "Active",
+        isActive: true,
+      },
+      {
+        id: 2,
+        code: "CSC 412",
+        title: "Computer Networks",
+        faculty: "Science, Eng & Technology",
+        department: "Computer Science",
+        lecturer: "Prof. Taiwo Akinwale",
+        level: "400",
+        students: 173,
+        status: "Active",
+        isActive: true,
+      },
+      {
+        id: 3,
+        code: "ACC 201",
+        title: "Financial Accounting",
+        faculty: "Management & Social Sci.",
+        department: "Accounting",
+        lecturer: "Dr. Yusuf Ibrahim",
+        level: "200",
+        students: 118,
+        status: "Draft",
+        isActive: false,
+      },
+    ];
+
+    lecturers.value = [
+      { id: "lec-001", name: "Dr. Folake Adesanya" },
+      { id: "lec-002", name: "Prof. Taiwo Akinwale" },
+      { id: "lec-003", name: "Dr. Yusuf Ibrahim" }
+    ];
+  }
+});
 
 const courseForm = reactive({
   code: "",
   title: "",
-  faculty: "Science, Eng & Technology",
+  faculty: "",
+  department: "",
   lecturer: "",
-  level: "100",
+  level: "300",
   students: 0,
   isActive: true,
 });
+
+const selectableDepartments = computed(() => {
+  if (!courseForm.faculty) return [];
+  return facultyDepartments[courseForm.faculty] || [];
+});
+
+function onFacultyChange() {
+  const departments = facultyDepartments[courseForm.faculty] || [];
+  if (!departments.includes(courseForm.department)) {
+    courseForm.department = "";
+  }
+}
 
 const filteredCourses = computed(() => {
   const query = search.value.trim().toLowerCase();
@@ -272,9 +386,10 @@ function resetForm() {
   Object.assign(courseForm, {
     code: "",
     title: "",
-    faculty: "Science, Eng & Technology",
+    faculty: "",
+    department: "",
     lecturer: "",
-    level: "100",
+    level: "300",
     students: 0,
     isActive: true,
   });
@@ -298,6 +413,7 @@ function openEditCourse(course) {
     code: course.code,
     title: course.title,
     faculty: course.faculty,
+    department: course.department,
     lecturer: course.lecturer,
     level: course.level,
     students: course.students,
@@ -316,6 +432,8 @@ function validateCourseForm() {
   if (!sanitizeText(courseForm.code)) return "Course code is required.";
   if (!sanitizeText(courseForm.title)) return "Course title is required.";
   if (!sanitizeText(courseForm.lecturer)) return "Lecturer name is required.";
+  if (!courseForm.faculty) return "Faculty selection is required.";
+  if (!courseForm.department) return "Department selection is required.";
 
   const students = Number(courseForm.students);
 
@@ -331,6 +449,7 @@ function buildPayload() {
     code: sanitizeText(courseForm.code).toUpperCase(),
     title: sanitizeText(courseForm.title),
     faculty: sanitizeText(courseForm.faculty),
+    department: sanitizeText(courseForm.department),
     lecturer: sanitizeText(courseForm.lecturer),
     level: sanitizeText(courseForm.level),
     students: Number(courseForm.students),
@@ -339,7 +458,7 @@ function buildPayload() {
   };
 }
 
-function handleSaveCourse() {
+async function handleSaveCourse() {
   const error = validateCourseForm();
 
   if (error) {
@@ -349,20 +468,69 @@ function handleSaveCourse() {
 
   const payload = buildPayload();
 
-  if (modalMode.value === "edit") {
-    courses.value = courses.value.map((course) =>
-      course.id === editingCourseId.value
-        ? { ...course, ...payload }
-        : course
-    );
-  } else {
-    courses.value.unshift({
-      id: Date.now(),
-      ...payload,
-    });
-  }
+  if (import.meta.env.VITE_API_URL) {
+    try {
+      if (modalMode.value === "edit") {
+        const backendPayload = {
+          courseCode: payload.code,
+          title: payload.title,
+          department: payload.department,
+          lecturer: payload.lecturer,
+          level: payload.level,
+          students: payload.students,
+          status: payload.isActive ? "Active" : "Draft"
+        };
+        await editCourse(editingCourseId.value, backendPayload);
+      } else {
+        const backendPayload = {
+          courseCode: payload.code,
+          title: payload.title,
+          department: payload.department,
+          lecturer: payload.lecturer,
+          level: payload.level,
+          students: payload.students,
+          status: payload.isActive ? "Active" : "Draft"
+        };
+        await createCourse(backendPayload);
+      }
 
-  closeModal();
+      // Re-fetch courses from backend
+      const res = await getCourses();
+      if (res.data && res.data.courses) {
+        courses.value = res.data.courses.map(c => ({
+          id: c._id,
+          code: c.courseCode,
+          title: c.title,
+          faculty: getFacultyFromDepartment(c.department),
+          department: c.department || "General",
+          lecturer: c.lecturer || "Not Assigned",
+          level: c.level || "300",
+          students: c.students || 0,
+          status: c.status === "Active" ? "Active" : "Draft",
+          isActive: c.status === "Active"
+        }));
+      }
+      closeModal();
+    } catch (err) {
+      console.error("Failed to save course:", err);
+      formError.value = err.response?.data?.error || err.message || "Failed to save course details.";
+    }
+  } else {
+    // Fallback local mutation mode
+    if (modalMode.value === "edit") {
+      courses.value = courses.value.map((course) =>
+        course.id === editingCourseId.value
+          ? { ...course, ...payload }
+          : course
+      );
+    } else {
+      courses.value.unshift({
+        id: Date.now(),
+        ...payload,
+      });
+    }
+    closeModal();
+  }
 }
 </script>
 

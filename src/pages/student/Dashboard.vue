@@ -170,16 +170,31 @@ import {
 } from "lucide-vue-next";
 
 import { useStudentStore } from "../../stores/student.store";
+import { useAuthStore } from "../../stores/auth.store";
 
 const router = useRouter();
 const studentStore = useStudentStore();
+const authStore = useAuthStore();
 
 const timetableView = ref("week");
 const showNotificationPopup = ref(false);
 const popupTimer = ref(null);
 const popupPaused = ref(false);
 
-const student = computed(() => studentStore.currentStudent);
+const student = computed(() => {
+  const storeStudent = studentStore.currentStudent;
+  if (authStore.user) {
+    const fullName = authStore.user.name || "";
+    const firstName = fullName.split(" ")[0] || "";
+    return {
+      ...storeStudent,
+      name: fullName,
+      firstName: firstName,
+      matricNo: authStore.user.identifier || storeStudent.matricNo
+    };
+  }
+  return storeStudent;
+});
 const popupNotifications = computed(() => studentStore.popupNotifications);
 
 const timetableGroups = computed(() => Object.values(studentStore.groupedTimetable));

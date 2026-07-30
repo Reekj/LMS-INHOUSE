@@ -1,4 +1,7 @@
 import { defineStore } from "pinia";
+import { getCourses } from "../api/course.api";
+import { getAllUsers } from "../api/user.api";
+import { getEvents } from "../api/event.api";
 
 const STORAGE_KEY = "uniosun_lms_student_v1";
 const LECTURER_MATERIALS_KEY = "uniosun_lms_lecturer_materials_v1";
@@ -932,6 +935,132 @@ export const useStudentStore = defineStore("student", {
           notifications: this.notifications,
         })
       );
+    },
+
+    async fetchStudentDataFromDB(studentId, enrolledCourseIds = []) {
+      try {
+        const [coursesRes, usersRes, eventsRes] = await Promise.all([
+          getCourses(),
+          getAllUsers(),
+          getEvents()
+        ]);
+        const allCourses = coursesRes.data.courses || [];
+        const allUsers = usersRes.data.users || [];
+
+        // Filter courses that are enrolled by this student
+        const myCourses = allCourses.filter(c => enrolledCourseIds.includes(c._id));
+
+        // Map courses
+        this.courses = myCourses.map(c => {
+          return {
+            id: c._id,
+            code: c.courseCode,
+            title: c.title,
+            units: c.units || 3,
+            lecturer: c.lecturer || "Not Assigned",
+            theme: "purple"
+          };
+        });
+
+        // Gather all materials and videos from enrolled courses
+        const materialsList = [];
+        const videosList = [];
+
+        const getFileTypeFromName = (name, category = "") => {
+          const ext = String(name || "").split(".").pop()?.toLowerCase();
+          if (category === "Video Lectures") return "mp4";
+          if (ext === "pdf") return "pdf";
+          if (["ppt", "pptx"].includes(ext)) return "pptx";
+          if (["doc", "docx"].includes(ext)) return "docx";
+          if (ext === "mp4") return "mp4";
+          if (ext === "zip") return "zip";
+          return "file";
+        };
+
+        myCourses.forEach(c => {
+          const rawMaterials = c.materials || [];
+          rawMaterials.forEach(m => {
+            const mapped = {
+              id: m._id || m.s3Key,
+              courseId: c._id,
+              title: m.title,
+              description: m.description || "",
+              category: m.category || "Lecture Notes (PDF)",
+              type: getFileTypeFromName(m.fileName || m.title, m.category),
+              week: m.week || 10,
+              date: m.uploadedAt ? new Date(m.uploadedAt).toLocaleDateString() : "Today",
+              size: m.size || "1.2 MB",
+              allowDownload: m.allowDownload !== false,
+              fileName: m.fileName || "document.pdf",
+              mimeType: m.mimeType || "",
+              duration: m.duration || "00:00",
+              s3Key: m.s3Key
+            };
+
+            if (mapped.category === "Video Lectures" || mapped.type === "mp4") {
+              videosList.push(mapped);
+            } else {
+              materialsList.push(mapped);
+            }
+          });
+        });
+
+        this.courseMaterials = materialsList;
+        this.courseVideos = videosList;
+
+        const formatTime12h = (value) => {
+          if (!value) return "";
+          if (value.includes("AM") || value.includes("PM")) return value;
+          const [rawHour, minute] = value.split(":");
+          let hour = Number(rawHour);
+          const period = hour >= 12 ? "PM" : "AM";
+          if (hour === 0) hour = 12;
+          if (hour > 12) hour -= 12;
+          return `${hour}:${minute} ${period}`;
+        };
+
+        const getColorFromType = (type) => {
+          if (type === "test") return "green";
+          if (type === "assignment") return "purple";
+          return "blue";
+        };
+
+        const getTypeFromTitle = (title) => {
+          const lowered = String(title || "").toLowerCase();
+          if (lowered.includes("test")) return "test";
+          if (lowered.includes("assignment") || lowered.includes("due")) return "assignment";
+          return "lecture";
+        };
+
+        // Fetch and map calendar events
+        const rawEvents = eventsRes.data.events || [];
+        this.calendarEvents = rawEvents.map(e => {
+          const courseCode = e.course?.courseCode || "";
+          const courseTitle = e.course?.title || "";
+          const lecturerName = e.lecturer?.name || "Lecturer";
+          const type = getTypeFromTitle(e.title);
+          
+          return {
+            id: e._id,
+            title: courseCode,
+            fullTitle: e.title,
+            courseCode,
+            courseTitle,
+            lecturer: lecturerName,
+            date: String(e.date || "").split("T")[0],
+            startTime: formatTime12h(e.startTime),
+            endTime: formatTime12h(e.endTime),
+            location: e.locationDetails || "Online",
+            note: e.instruction || "Attendance is compulsory.",
+            color: getColorFromType(type),
+            type
+          };
+        });
+
+        this.persist();
+      } catch (err) {
+        console.error("Failed to fetch student data from DB:", err);
+      }
     },
 
     refreshFromLecturerStores() {

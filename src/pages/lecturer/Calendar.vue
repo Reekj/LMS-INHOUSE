@@ -234,16 +234,20 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, onMounted } from "vue";
 import { CalendarDays, Clock, MapPin } from "lucide-vue-next";
 
 import AppModal from "../../components/common/AppModal.vue";
+import { useLecturerCoursesStore } from "../../stores/lecturerCourses.store";
+import { getEvents, createEvent, editEvent, deleteEvent } from "../../api/event.api";
+
+const coursesStore = useLecturerCoursesStore();
 
 const totalWeeks = 15;
 const currentWeek = 9;
 
 const activeView = ref("week");
-const currentDate = ref(createLocalDate("2026-05-04"));
+const currentDate = ref(createLocalDate(toDateKey(new Date())));
 const isEventFormOpen = ref(false);
 const isViewModalOpen = ref(false);
 const modalMode = ref("add");
@@ -251,65 +255,70 @@ const editingEventId = ref(null);
 const formError = ref("");
 const selectedEvent = ref({});
 
-const courses = [
-  {
-    id: "csc-112",
-    code: "CSC 112",
-    title: "Introduction to Computer Science",
-  },
-  {
-    id: "csc-312",
-    code: "CSC 312",
-    title: "Data Structures",
-  },
-  {
-    id: "csc-322",
-    code: "CSC 322",
-    title: "Database Management",
-  },
-];
+const courses = computed(() => {
+  return coursesStore.lecturerCourses;
+});
 
-const events = ref([
-  {
-    id: 1,
-    courseId: "csc-322",
-    title: "CSC 322",
-    type: "lecture",
-    date: "2026-05-04",
-    startTime: "10:00",
-    endTime: "10:45",
-    location: "Online",
-    frequency: "once",
-    instructions: "Attendance is compulsory.",
-  },
-  {
-    id: 2,
-    courseId: "csc-312",
-    title: "CSC 312 TEST",
-    type: "test",
-    date: "2026-05-04",
-    startTime: "11:00",
-    endTime: "11:45",
-    location: "Online",
-    frequency: "once",
-    instructions: "Mid-semester test. Attendance is compulsory.",
-  },
-  {
-    id: 3,
-    courseId: "csc-112",
-    title: "ASSIGNMENT DUE",
-    type: "assignment",
-    date: "2026-05-06",
-    startTime: "13:00",
-    endTime: "13:45",
-    location: "Online",
-    frequency: "once",
-    instructions: "Submit before the deadline.",
-  },
-]);
+const events = ref([]);
+
+async function fetchEventsData() {
+  try {
+    const res = await getEvents();
+    if (res.data && res.data.events) {
+      events.value = res.data.events.map(mapDBEventForUI);
+    }
+  } catch (err) {
+    console.error("Failed to fetch events from API:", err);
+  }
+}
+
+onMounted(() => {
+  if (import.meta.env.VITE_API_URL) {
+    fetchEventsData();
+  } else {
+    events.value = [
+      {
+        id: 1,
+        courseId: "csc-322",
+        title: "CSC 322",
+        type: "lecture",
+        date: "2026-05-04",
+        startTime: "10:00",
+        endTime: "10:45",
+        location: "Online",
+        frequency: "once",
+        instructions: "Attendance is compulsory.",
+      },
+      {
+        id: 2,
+        courseId: "csc-312",
+        title: "CSC 312 TEST",
+        type: "test",
+        date: "2026-05-04",
+        startTime: "11:00",
+        endTime: "11:45",
+        location: "Online",
+        frequency: "once",
+        instructions: "Mid-semester test. Attendance is compulsory.",
+      },
+      {
+        id: 3,
+        courseId: "csc-112",
+        title: "ASSIGNMENT DUE",
+        type: "assignment",
+        date: "2026-05-06",
+        startTime: "13:00",
+        endTime: "13:45",
+        location: "Online",
+        frequency: "once",
+        instructions: "Submit before the deadline.",
+      },
+    ];
+  }
+});
 
 const eventForm = reactive({
-  courseId: "csc-112",
+  courseId: "",
   title: "",
   date: "2026-05-04",
   startTime: "12:00",
@@ -333,7 +342,7 @@ const timeSlots = [
 
 const monthWeekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-const formattedToday = computed(() => formatLongDate("2026-03-29"));
+const formattedToday = computed(() => formatLongDate(toDateKey(new Date())));
 
 const monthLabel = computed(() => {
   return currentDate.value.toLocaleDateString("en-US", {
@@ -427,6 +436,23 @@ function toDateKey(date) {
   return `${year}-${month}-${day}`;
 }
 
+function mapDBEventForUI(e) {
+  const courseId = e.course?._id || e.course;
+  return {
+    id: e._id,
+    courseId: courseId,
+    title: e.title,
+    type: getTypeFromTitle(e.title),
+    date: String(e.date || "").split("T")[0],
+    startTime: e.startTime,
+    endTime: e.endTime,
+    location: e.locationDetails || "Online",
+    locationType: e.locationType || "online",
+    frequency: e.frequency || "once",
+    instructions: e.instruction || "",
+  };
+}
+
 function eventsForDate(dateKey) {
   return events.value
     .filter((event) => event.date === dateKey)
@@ -467,7 +493,7 @@ function getTypeFromTitle(title) {
 
 function resetForm() {
   Object.assign(eventForm, {
-    courseId: "csc-112",
+    courseId: courses.value[0]?.id || "",
     title: "",
     date: toDateKey(currentDate.value),
     startTime: "12:00",
@@ -555,7 +581,21 @@ function buildPayload() {
   };
 }
 
-function saveEvent() {
+function buildApiPayload() {
+  return {
+    title: sanitizeText(eventForm.title),
+    course: eventForm.courseId,
+    frequency: eventForm.frequency,
+    locationType: eventForm.location.toLowerCase() === "online" ? "online" : "physical",
+    locationDetails: sanitizeText(eventForm.location),
+    instruction: sanitizeText(eventForm.instructions) || "Attendance is compulsory.",
+    date: eventForm.date,
+    startTime: eventForm.startTime,
+    endTime: eventForm.endTime
+  };
+}
+
+async function saveEvent() {
   const error = validateForm();
 
   if (error) {
@@ -564,29 +604,57 @@ function saveEvent() {
   }
 
   const payload = buildPayload();
+  const apiPayload = buildApiPayload();
 
-  if (modalMode.value === "edit") {
-    events.value = events.value.map((event) =>
-      event.id === editingEventId.value ? { ...event, ...payload } : event
-    );
+  if (import.meta.env.VITE_API_URL) {
+    try {
+      if (modalMode.value === "edit") {
+        await editEvent(editingEventId.value, apiPayload);
+      } else {
+        await createEvent(apiPayload);
+      }
+      await fetchEventsData();
+      currentDate.value = createLocalDate(apiPayload.date);
+      activeView.value = "week";
+      closeEventForm();
+    } catch (err) {
+      console.error("Failed to save event:", err);
+      formError.value = err.response?.data?.error || err.message || "Failed to save event.";
+    }
   } else {
-    events.value = [
-      ...events.value,
-      {
-        id: Date.now(),
-        ...payload,
-      },
-    ];
+    if (modalMode.value === "edit") {
+      events.value = events.value.map((event) =>
+        event.id === editingEventId.value ? { ...event, ...payload } : event
+      );
+    } else {
+      events.value = [
+        ...events.value,
+        {
+          id: Date.now(),
+          ...payload,
+        },
+      ];
+    }
+    currentDate.value = createLocalDate(payload.date);
+    activeView.value = "week";
+    closeEventForm();
   }
-
-  currentDate.value = createLocalDate(payload.date);
-  activeView.value = "week";
-  closeEventForm();
 }
 
-function deleteSelectedEvent() {
-  events.value = events.value.filter((event) => event.id !== selectedEvent.value.id);
-  isViewModalOpen.value = false;
+async function deleteSelectedEvent() {
+  if (import.meta.env.VITE_API_URL) {
+    try {
+      await deleteEvent(selectedEvent.value.id);
+      await fetchEventsData();
+      isViewModalOpen.value = false;
+    } catch (err) {
+      console.error("Failed to delete event:", err);
+      alert(err.response?.data?.error || err.message || "Failed to delete event.");
+    }
+  } else {
+    events.value = events.value.filter((event) => event.id !== selectedEvent.value.id);
+    isViewModalOpen.value = false;
+  }
 }
 
 function goPrevious() {
@@ -627,10 +695,6 @@ function formatTime(value) {
 </script>
 
 <style scoped>
-.calendar-page {
-  width: 100%;
-}
-
 .calendar-header {
   display: flex;
   align-items: flex-start;

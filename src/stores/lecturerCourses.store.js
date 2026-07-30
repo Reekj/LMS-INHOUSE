@@ -1,4 +1,6 @@
 import { defineStore } from "pinia";
+import { getCourses } from "../api/course.api";
+import { getAllUsers } from "../api/user.api";
 
 const STORAGE_KEY = "uniosun_lms_lecturer_courses_v1";
 const CURRENT_LECTURER_ID = "lec-001";
@@ -174,5 +176,43 @@ export const useLecturerCoursesStore = defineStore("lecturerCourses", {
 
       this.persist();
     },
+
+    async fetchCoursesFromDB(lecturerName) {
+      if (!lecturerName) return;
+      try {
+        const [coursesRes, usersRes] = await Promise.all([
+          getCourses(),
+          getAllUsers()
+        ]);
+        const courses = coursesRes.data.courses || [];
+        const users = usersRes.data.users || [];
+
+        const myCourses = courses.filter(c => c.lecturer && lecturerName && c.lecturer.toLowerCase().trim() === lecturerName.toLowerCase().trim());
+
+        const mapped = myCourses.map(c => {
+          const sCount = users.filter(u => 
+            u.role === "student" && 
+            Array.isArray(u.enrolledCourses) && 
+            u.enrolledCourses.includes(c._id)
+          ).length;
+
+          return {
+            id: c._id,
+            code: c.courseCode,
+            title: c.title,
+            units: c.units || 3,
+            students: sCount,
+            theme: "purple",
+            materials: c.materials || []
+          };
+        });
+
+        this.availableCourses = mapped;
+        this.assignments = mapped.map(m => ({ lecturerId: this.currentLecturerId, courseId: m.id }));
+        this.persist();
+      } catch (err) {
+        console.error("Failed to sync lecturer courses store:", err);
+      }
+    }
   },
 });

@@ -33,14 +33,7 @@
           />
         </label>
 
-        <label>
-          Login As
-          <select v-model="form.role">
-            <option value="admin">Admin</option>
-            <option value="lecturer">Lecturer</option>
-            <option value="student">Student</option>
-          </select>
-        </label>
+
 
         <p v-if="errorMessage" class="error-message">
           {{ errorMessage }}
@@ -72,7 +65,6 @@ const errorMessage = ref("");
 const form = reactive({
   email: "",
   password: "",
-  role: "admin",
 });
 
 function sanitizeText(value) {
@@ -92,10 +84,6 @@ function validateLogin() {
     return "Password is required.";
   }
 
-  if (!["admin", "lecturer", "student"].includes(form.role)) {
-    return "Select a valid login role.";
-  }
-
   return "";
 }
 
@@ -109,7 +97,7 @@ function getRedirectPath(role) {
   return redirects[role] || "/login";
 }
 
-function handleLogin() {
+async function handleLogin() {
   const error = validateLogin();
 
   if (error) {
@@ -117,13 +105,17 @@ function handleLogin() {
     return;
   }
 
-  auth.login({
-    email: sanitizeText(form.email).toLowerCase(),
-    password: sanitizeText(form.password),
-    role: form.role,
-  });
+  errorMessage.value = "";
+  try {
+    const role = await auth.login({
+      email: sanitizeText(form.email).toLowerCase(),
+      password: sanitizeText(form.password),
+    });
 
-  router.replace(getRedirectPath(form.role));
+    router.replace(getRedirectPath(role));
+  } catch (err) {
+    errorMessage.value = err.message || "An error occurred during login.";
+  }
 }
 </script>
 
