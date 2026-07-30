@@ -96,100 +96,181 @@
 </template>
 
 <script setup>
-import { reactive, ref } from "vue";
+import { reactive, ref, onMounted } from "vue";
+import { getDashboardStats } from "../../api/stats.api";
+import { getBroadcasts } from "../../api/broadcast.api";
+import { getEvents } from "../../api/event.api";
 
 const metrics = reactive([
   {
-    title: "DAILY ACTIVE USERS",
-    value: "2,145",
-    trend: "↑ 14% vs previous 30 days",
-    trendType: "positive",
+    title: "TOTAL STUDENTS",
+    value: "0",
+    trend: "Enrolled learning accounts",
+    trendType: "neutral",
     type: "bars",
     chartClass: "blue-chart",
-    bars: [18, 42, 30, 48, 76, 62, 100],
+    bars: [0, 0, 0, 0, 0, 0, 0],
   },
   {
-    title: "BANDWIDTH CONSUMED",
-    value: "1.4 TB",
-    trend: "↑ 22% vs previous 30 days",
-    trendType: "negative",
+    title: "TOTAL COURSES",
+    value: "0",
+    trend: "Academic course catalogues",
+    trendType: "neutral",
     type: "bars",
     chartClass: "red-chart",
-    bars: [42, 34, 55, 28, 61, 50, 100],
+    bars: [0, 0, 0, 0, 0, 0, 0],
   },
   {
-    title: "STORAGE CAPACITY",
-    value: "78%",
-    trend: "3.9 TB used of 5 TB limit",
+    title: "USER DISTRIBUTION",
+    value: "0",
+    trend: "Students and teaching staff",
     trendType: "neutral",
     type: "storage",
   },
 ]);
 
-const storageParts = [
+const storageParts = reactive([
   {
-    name: "Videos",
-    value: 54,
+    name: "Students",
+    value: 0,
     className: "videos",
   },
   {
-    name: "Docs",
-    value: 15,
+    name: "Lecturers",
+    value: 0,
     className: "docs",
   },
   {
     name: "Others",
-    value: 9,
+    value: 0,
     className: "others",
   },
   {
-    name: "Free",
-    value: 22,
+    name: "Free Space",
+    value: 0,
     className: "free",
-  },
-];
-
-const modules = reactive([
-  {
-    name: "Assignments (Submissions)",
-    count: "4,291",
-    progress: 96,
-  },
-  {
-    name: "Video Player",
-    count: "3,920",
-    progress: 88,
-  },
-  {
-    name: "Discussion Boards",
-    count: "1,842",
-    progress: 55,
-  },
-  {
-    name: "Online Test (CBT)",
-    count: "940",
-    progress: 32,
   },
 ]);
 
-const serverLog = ref(`[09:41] INFO: SSO Token refreshed
-[09:45] WARN: High CPU load on Node 3
-[09:50] INFO: Backup completed successfully
-[10:02] INFO: New course batch synchronized
-[10:15] INFO: Email digest dispatched
-[10:30] WARN: DB query latency > 500ms`);
+const modules = reactive([
+  {
+    name: "Online Tests (CBT)",
+    count: "0",
+    progress: 0,
+  },
+  {
+    name: "Calendar Events Scheduled",
+    count: "0",
+    progress: 0,
+  },
+  {
+    name: "System Broadcasts Dispatched",
+    count: "0",
+    progress: 0,
+  },
+  {
+    name: "Registered Courses Catalog",
+    count: "0",
+    progress: 100,
+  },
+]);
+
+const serverLog = ref("Connecting to database and reading metrics...");
+
+async function loadAnalytics() {
+  if (import.meta.env.VITE_API_URL) {
+    try {
+      const [statsRes, broadcastsRes, eventsRes] = await Promise.all([
+        getDashboardStats(),
+        getBroadcasts(),
+        getEvents()
+      ]);
+
+      if (statsRes.data && statsRes.data.success) {
+        const stats = statsRes.data.data;
+        const studentCount = stats.students || 0;
+        const lecturerCount = stats.lecturers || 0;
+        const courseCount = stats.courses || 0;
+        const eventCount = stats.events || 0;
+        const testCount = stats.tests || 0;
+        const broadcastCount = stats.broadcasts || 0;
+        const totalUsers = studentCount + lecturerCount;
+
+        // 1. Update metric cards
+        metrics[0].title = "TOTAL STUDENTS";
+        metrics[0].value = studentCount.toString();
+        metrics[0].trend = "Enrolled learning accounts";
+        metrics[0].trendType = "positive";
+
+        metrics[1].title = "TOTAL COURSES";
+        metrics[1].value = courseCount.toString();
+        metrics[1].trend = "Academic course catalogues";
+        metrics[1].trendType = "positive";
+
+        metrics[2].title = "USER DISTRIBUTION";
+        metrics[2].value = totalUsers.toString();
+        metrics[2].trend = "Students and teaching staff";
+        metrics[2].trendType = "neutral";
+
+        // Update distribution percentages
+        if (totalUsers > 0) {
+          const studentPct = Math.round((studentCount / totalUsers) * 100);
+          const lecturerPct = 100 - studentPct;
+          storageParts[0].name = "Students";
+          storageParts[0].value = studentPct;
+          storageParts[1].name = "Lecturers";
+          storageParts[1].value = lecturerPct;
+          storageParts[2].name = "Others";
+          storageParts[2].value = 0;
+          storageParts[3].name = "Free Space";
+          storageParts[3].value = 0;
+        }
+
+        // 2. Update active list modules
+        modules[0].name = "Online Tests (CBT)";
+        modules[0].count = testCount.toString();
+        modules[0].progress = Math.min(100, Math.round((testCount / Math.max(1, courseCount)) * 100));
+
+        modules[1].name = "Calendar Events Scheduled";
+        modules[1].count = eventCount.toString();
+        modules[1].progress = Math.min(100, Math.round((eventCount / Math.max(1, courseCount)) * 100));
+
+        modules[2].name = "System Broadcasts Dispatched";
+        modules[2].count = broadcastCount.toString();
+        modules[2].progress = Math.min(100, Math.round((broadcastCount / 5) * 100));
+
+        modules[3].name = "Registered Courses Catalog";
+        modules[3].count = courseCount.toString();
+        modules[3].progress = 100;
+      }
+
+      // 3. Format Real activity logs
+      let logs = [];
+      if (broadcastsRes.data && broadcastsRes.data.broadcasts) {
+        broadcastsRes.data.broadcasts.slice(0, 3).forEach(b => {
+          logs.push(`[${new Date(b.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}] INFO: Broadcast "${b.title}" published`);
+        });
+      }
+      if (eventsRes.data && eventsRes.data.events) {
+        eventsRes.data.events.slice(0, 3).forEach(e => {
+          logs.push(`[${new Date(e.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}] INFO: Event "${e.title}" scheduled`);
+        });
+      }
+      if (logs.length > 0) {
+        serverLog.value = logs.join("\n");
+      }
+    } catch (err) {
+      console.error("Failed to load analytics data:", err);
+    }
+  }
+}
+
+onMounted(() => {
+  loadAnalytics();
+});
 
 function refreshAnalytics() {
-  metrics[0].value = "2,168";
-  metrics[1].value = "1.42 TB";
-  modules[0].count = "4,305";
-
-  serverLog.value = `[${new Date().toLocaleTimeString()}] INFO: Metrics refreshed locally
-[09:41] INFO: SSO Token refreshed
-[09:45] WARN: High CPU load on Node 3
-[09:50] INFO: Backup completed successfully
-[10:02] INFO: New course batch synchronized
-[10:15] INFO: Email digest dispatched`;
+  loadAnalytics();
 }
 </script>
 

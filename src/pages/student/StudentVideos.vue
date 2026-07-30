@@ -4,16 +4,24 @@
       <main>
         <section class="player-card">
           <div class="video-stage">
-            <button type="button" class="play-button" @click="togglePlay">
+            <video
+              v-if="selectedVideo?.fileUrl"
+              ref="videoRef"
+              :src="selectedVideo.fileUrl"
+              @timeupdate="syncVideoProgress"
+              @loadedmetadata="syncVideoMeta"
+              style="width: 100%; height: 100%; object-fit: contain; border-radius: 8px 8px 0 0;"
+            ></video>
+
+            <button type="button" class="play-button" @click="togglePlay" style="z-index: 10;">
               <Play v-if="!isPlaying" :size="48" fill="currentColor" />
               <Pause v-else :size="48" fill="currentColor" />
             </button>
 
-            <div class="video-caption">
-              <h2>{{ selectedVideo.fullTitle }}</h2>
+            <div class="video-caption" style="z-index: 10; pointer-events: none;">
+              <h2>{{ selectedVideo.title }}</h2>
               <p>
-                {{ course?.code }} · {{ selectedVideo.lecturer }} · Week
-                {{ selectedVideo.week }}
+                {{ course?.code }} · Week {{ selectedVideo.week }}
               </p>
             </div>
           </div>
@@ -24,16 +32,17 @@
               <Pause v-else :size="16" />
             </button>
 
-            <span>{{ selectedVideo.currentTime }}</span>
+            <span>{{ formatTime(videoCurrentTime) }}</span>
 
             <input
               v-model.number="progress"
               type="range"
               min="0"
               max="100"
+              @input="onSeek"
             />
 
-            <span>{{ selectedVideo.duration }}</span>
+            <span>{{ formatTime(videoDuration) }}</span>
 
             <button type="button" class="speed-btn" @click="cycleSpeed">
               {{ speed }}x
@@ -43,6 +52,7 @@
               type="button"
               class="download-video"
               :disabled="!selectedVideo.allowDownload"
+              @click="downloadVideo(selectedVideo)"
             >
               Download
             </button>
@@ -102,14 +112,18 @@ import { useRoute } from "vue-router";
 import { Maximize2, Pause, Play } from "lucide-vue-next";
 
 import { useStudentStore } from "../../stores/student.store";
+import { getMaterialDownloadUrl } from "../../api/course.api";
 
 const route = useRoute();
 const studentStore = useStudentStore();
 
 const isPlaying = ref(false);
-const progress = ref(38);
+const progress = ref(0);
 const speed = ref(1);
 const selectedVideo = ref(null);
+const videoRef = ref(null);
+const videoDuration = ref(0);
+const videoCurrentTime = ref(0);
 
 const courseId = computed(() => String(route.params.courseId || ""));
 const course = computed(() => studentStore.getCourseById(courseId.value));
@@ -123,20 +137,93 @@ watch(
   { immediate: true }
 );
 
+watch(
+  selectedVideo,
+  async (newVideo) => {
+    if (newVideo && newVideo.s3Key && !newVideo.fileUrl) {
+      try {
+        const res = await getMaterialDownloadUrl(newVideo.s3Key);
+        if (res.data && res.data.downloadUrl) {
+          newVideo.fileUrl = res.data.downloadUrl;
+        }
+      } catch (err) {
+        console.error("Failed to load pre-signed video URL:", err);
+      }
+    }
+  },
+  { immediate: true }
+);
+
 function selectVideo(video) {
   selectedVideo.value = video;
   isPlaying.value = false;
   progress.value = 0;
+  videoCurrentTime.value = 0;
 }
 
 function togglePlay() {
-  isPlaying.value = !isPlaying.value;
+  if (!videoRef.value) return;
+  if (isPlaying.value) {
+    videoRef.value.pause();
+    isPlaying.value = false;
+  } else {
+    videoRef.value.play();
+    isPlaying.value = true;
+  }
+}
+
+function syncVideoProgress() {
+  if (!videoRef.value) return;
+  videoCurrentTime.value = videoRef.value.currentTime;
+  progress.value = (videoRef.value.currentTime / videoRef.value.duration) * 100;
+}
+
+function syncVideoMeta() {
+  if (!videoRef.value) return;
+  videoDuration.value = videoRef.value.duration;
+}
+
+function onSeek() {
+  if (!videoRef.value) return;
+  videoRef.value.currentTime = (progress.value / 100) * videoRef.value.duration;
+}
+
+function formatTime(seconds) {
+  const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+  const mins = Math.floor(safeSeconds / 60);
+  const secs = Math.floor(safeSeconds % 60);
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
 function cycleSpeed() {
   const speeds = [1, 1.25, 1.5, 2];
   const currentIndex = speeds.indexOf(speed.value);
-  speed.value = speeds[(currentIndex + 1) % speeds.length];
+  const nextSpeed = speeds[(currentIndex + 1) % speeds.length];
+  speed.value = nextSpeed;
+  if (videoRef.value) {
+    videoRef.value.playbackRate = nextSpeed;
+  }
+}
+
+async function downloadVideo(video) {
+  if (!video?.allowDownload) return;
+  if (import.meta.env.VITE_API_URL && video.s3Key) {
+    try {
+      const res = await getMaterialDownloadUrl(video.s3Key, true);
+      if (res.data && res.data.downloadUrl) {
+        const link = document.createElement("a");
+        link.href = res.data.downloadUrl;
+        link.download = video.fileName || video.title;
+        link.target = "_blank";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch (err) {
+      console.error("Failed to download video:", err);
+      alert("Failed to download video.");
+    }
+  }
 }
 </script>
 

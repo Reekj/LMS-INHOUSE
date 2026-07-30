@@ -85,6 +85,7 @@ import { useRoute, useRouter } from "vue-router";
 import { Download, FileText } from "lucide-vue-next";
 
 import { useStudentStore } from "../../stores/student.store";
+import { getMaterialDownloadUrl } from "../../api/course.api";
 
 const route = useRoute();
 const router = useRouter();
@@ -135,24 +136,42 @@ function previewMaterial(material) {
   router.push(`/student/my-courses/${courseId.value}/materials/${material.id}`);
 }
 
-function downloadMaterial(material) {
+async function downloadMaterial(material) {
   if (!material.allowDownload) return;
 
-  const blob = new Blob(
-    [`${material.title}\n\nThis is a UI demo download placeholder.`],
-    { type: "text/plain;charset=utf-8" }
-  );
+  if (import.meta.env.VITE_API_URL && material.s3Key) {
+    try {
+      const res = await getMaterialDownloadUrl(material.s3Key, true);
+      if (res.data && res.data.downloadUrl) {
+        const link = document.createElement("a");
+        link.href = res.data.downloadUrl;
+        link.download = material.fileName || material.title;
+        link.target = "_blank";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch (err) {
+      console.error("Failed to get download URL:", err);
+      alert("Failed to download file. Please try again.");
+    }
+  } else {
+    const blob = new Blob(
+      [`${material.title}\n\nThis is a UI demo download placeholder.`],
+      { type: "text/plain;charset=utf-8" }
+    );
 
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
 
-  link.href = url;
-  link.download = material.title;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+    link.href = url;
+    link.download = material.title;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 
-  URL.revokeObjectURL(url);
+    URL.revokeObjectURL(url);
+  }
 }
 </script>
 

@@ -13,22 +13,24 @@
           <h2>Personal Profile</h2>
 
           <div class="profile-top">
-            <div class="avatar">
-              {{ initials }}
+            <div class="avatar" style="overflow: hidden; display: flex; align-items: center; justify-content: center;">
+              <img v-if="profile.avatarUrl" :src="profile.avatarUrl" alt="Avatar" style="width: 100%; height: 100%; object-fit: cover;" />
+              <template v-else>{{ initials }}</template>
             </div>
 
             <div class="profile-actions">
               <div class="button-row">
-                <button class="outline-btn">
+                <label class="outline-btn" style="cursor: pointer; display: inline-block; margin: 0;">
                   Change Photo
-                </button>
+                  <input type="file" ref="fileInput" accept="image/*" @change="onPhotoSelected" style="display: none;" />
+                </label>
 
-                <button class="danger-btn">
+                <button class="danger-btn" @click="handleRemovePhoto">
                   Remove
                 </button>
               </div>
 
-              <p>JPG or PNG. Max size 2MB</p>
+              <p>JPG or PNG. Max size 200KB</p>
             </div>
           </div>
 
@@ -197,19 +199,45 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, onMounted } from "vue";
+import { useAuthStore } from "../../stores/auth.store";
+import { updateUser } from "../../api/user.api";
+import { uploadPhoto, removePhoto } from "../../api/auth.api";
 
 import AppButton from "../../components/common/AppButton.vue";
 import AppBadge from "../../components/common/AppBadge.vue";
 import AppToggle from "../../components/common/AppToggle.vue";
 
 const revealApiKey = ref(false);
+const authStore = useAuthStore();
 
 const profile = reactive({
-  firstName: "Adeyinka",
-  lastName: "Oladapo",
-  phone: "+234 803 456 7890",
-  email: "a.oladapo@uniosun.edu.ng",
+  firstName: "",
+  lastName: "",
+  phone: "",
+  email: "",
+  avatarUrl: "",
+});
+
+const fileInput = ref(null);
+
+onMounted(() => {
+  if (authStore.user) {
+    const fullName = authStore.user.name || "";
+    const nameParts = fullName.split(" ");
+    profile.firstName = nameParts[0] || "";
+    profile.lastName = nameParts.slice(1).join(" ") || "";
+    profile.email = authStore.user.email || "";
+    profile.phone = authStore.user.phone || "+234 803 456 7890";
+    profile.avatarUrl = authStore.user.profileImage || "";
+  } else {
+    // Offline fallback default profile values
+    profile.firstName = "Adeyinka";
+    profile.lastName = "Oladapo";
+    profile.phone = "+234 803 456 7890";
+    profile.email = "a.oladapo@uniosun.edu.ng";
+    profile.avatarUrl = "";
+  }
 });
 
 const grades = reactive([
@@ -312,11 +340,32 @@ const connectedIntegrations = computed(() => {
   return integrations.filter((item) => item.enabled).length;
 });
 
-function saveProfile() {
+async function saveProfile() {
   profile.firstName = profile.firstName.replace(/[<>]/g, "").trim();
   profile.lastName = profile.lastName.replace(/[<>]/g, "").trim();
   profile.phone = profile.phone.replace(/[<>]/g, "").trim();
   profile.email = profile.email.replace(/[<>]/g, "").trim();
+
+  if (import.meta.env.VITE_API_URL && authStore.user) {
+    try {
+      const payload = {
+        name: `${profile.firstName} ${profile.lastName}`,
+        email: profile.email,
+      };
+      const res = await updateUser(authStore.user.id, payload);
+      if (res.data && res.data.user) {
+        authStore.user.name = res.data.user.name;
+        authStore.user.email = res.data.user.email;
+        localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+        alert("Profile updated successfully!");
+      }
+    } catch (err) {
+      console.error("Failed to update profile:", err);
+      alert(err.response?.data?.error || err.message || "Failed to update profile.");
+    }
+  } else {
+    alert("Profile saved locally (Offline mode).");
+  }
 }
 
 function savePolicy() {
@@ -329,6 +378,60 @@ function regenerateApiKey() {
   apiKey.value = `demo-api-key-${Date.now().toString(36)}-${Math.random()
     .toString(36)
     .substring(2, 10)}`;
+}
+
+async function onPhotoSelected(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  if (file.size > 200 * 1024) {
+    alert("Image must be less than 200KB");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("image", file);
+
+  if (import.meta.env.VITE_API_URL && authStore.user) {
+    try {
+      const res = await uploadPhoto(authStore.user.id, formData);
+      if (res.data && res.data.profileImage) {
+        profile.avatarUrl = res.data.profileImage;
+        authStore.user.profileImage = res.data.profileImage;
+        localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+        alert("Profile photo updated successfully!");
+      }
+    } catch (err) {
+      console.error("Failed to upload photo:", err);
+      alert(err.response?.data?.error || err.message || "Failed to upload photo.");
+    }
+  } else {
+    // Offline local simulation fallback
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      profile.avatarUrl = e.target.result;
+      alert("Photo uploaded locally (Offline mode).");
+    };
+    reader.readAsDataURL(file);
+  }
+}
+
+async function handleRemovePhoto() {
+  if (import.meta.env.VITE_API_URL && authStore.user) {
+    try {
+      await removePhoto(authStore.user.id);
+      profile.avatarUrl = "";
+      authStore.user.profileImage = "";
+      localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+      alert("Profile photo removed successfully!");
+    } catch (err) {
+      console.error("Failed to remove photo:", err);
+      alert(err.response?.data?.error || err.message || "Failed to remove photo.");
+    }
+  } else {
+    profile.avatarUrl = "";
+    alert("Photo removed locally (Offline mode).");
+  }
 }
 </script>
 

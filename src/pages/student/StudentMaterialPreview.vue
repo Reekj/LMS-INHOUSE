@@ -30,36 +30,66 @@
         </button>
       </div>
 
-      <div class="viewer-body">
-        <article class="document-paper">
-          <h2>{{ material?.title }}</h2>
+      <div class="viewer-body" style="padding: 0; width: 100%;">
+        <template v-if="material?.type === 'pdf'">
+          <iframe
+            v-if="resolvedUrl"
+            :src="resolvedUrl"
+            style="width: 100%; min-height: 760px; border: 0; background: white;"
+            title="PDF preview"
+          ></iframe>
+          <div v-else style="padding: 40px; text-align: center; color: #64748b; font-weight: bold;">
+            Loading PDF preview...
+          </div>
+        </template>
+        <template v-else-if="material?.type === 'mp4'">
+          <div style="width: 100%; display: grid; place-items: center; background: #0f172a; padding: 40px 0;">
+            <video
+              v-if="resolvedUrl"
+              :src="resolvedUrl"
+              controls
+              style="width: 90%; max-height: 600px; border-radius: 8px; outline: none;"
+            ></video>
+            <div v-else style="color: white; padding: 40px;">
+              Loading video preview...
+            </div>
+          </div>
+        </template>
+        <div v-else style="width: 100%; display: grid; place-items: center; padding: 60px 24px;">
+          <article class="document-paper">
+            <h2>{{ material?.title }}</h2>
 
-          <p>
-            This preview represents the uploaded course material. When the API
-            is connected, the actual uploaded document URL will be rendered here.
-          </p>
+            <p>
+              This file type ({{ material?.type || 'unknown' }}) cannot be previewed directly in the browser.
+            </p>
 
-          <p>
-            Course materials can be previewed by students before downloading.
-            Download is only enabled when the lecturer permits it.
-          </p>
+            <p>
+              Please download the file to view its contents.
+            </p>
 
-          <div class="paper-line"></div>
-          <div class="paper-line short"></div>
-          <div class="paper-line"></div>
-          <div class="paper-line medium"></div>
-        </article>
+            <button
+              type="button"
+              class="back-btn"
+              style="margin-top: 16px; border: 1px solid #0875f5; color: #0875f5;"
+              :disabled="!material?.allowDownload"
+              @click="downloadMaterial"
+            >
+              Download file
+            </button>
+          </article>
+        </div>
       </div>
     </section>
   </section>
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, ref, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Download } from "lucide-vue-next";
 
 import { useStudentStore } from "../../stores/student.store";
+import { getMaterialDownloadUrl } from "../../api/course.api";
 
 const route = useRoute();
 const router = useRouter();
@@ -67,6 +97,7 @@ const studentStore = useStudentStore();
 
 const courseId = computed(() => String(route.params.courseId || ""));
 const materialId = computed(() => String(route.params.materialId || ""));
+const resolvedUrl = ref("");
 
 const material = computed(() =>
   studentStore
@@ -74,28 +105,59 @@ const material = computed(() =>
     .find((item) => item.id === materialId.value)
 );
 
+onMounted(async () => {
+  if (import.meta.env.VITE_API_URL && material.value?.s3Key) {
+    try {
+      const res = await getMaterialDownloadUrl(material.value.s3Key);
+      if (res.data && res.data.downloadUrl) {
+        resolvedUrl.value = res.data.downloadUrl;
+      }
+    } catch (err) {
+      console.error("Failed to load student preview URL:", err);
+    }
+  }
+});
+
 function goBack() {
   router.push(`/student/my-courses/${courseId.value}/materials`);
 }
 
-function downloadMaterial() {
+async function downloadMaterial() {
   if (!material.value?.allowDownload) return;
 
-  const blob = new Blob(
-    [`${material.value.title}\n\nThis is a UI demo download placeholder.`],
-    { type: "text/plain;charset=utf-8" }
-  );
+  if (import.meta.env.VITE_API_URL && material.value.s3Key) {
+    try {
+      const res = await getMaterialDownloadUrl(material.value.s3Key, true);
+      if (res.data && res.data.downloadUrl) {
+        const link = document.createElement("a");
+        link.href = res.data.downloadUrl;
+        link.download = material.value.fileName || material.value.title;
+        link.target = "_blank";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch (err) {
+      console.error("Failed to get download URL:", err);
+      alert("Failed to download file. Please try again.");
+    }
+  } else {
+    const blob = new Blob(
+      [`${material.value.title}\n\nThis is a UI demo download placeholder.`],
+      { type: "text/plain;charset=utf-8" }
+    );
 
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
 
-  link.href = url;
-  link.download = material.value.title;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+    link.href = url;
+    link.download = material.value.title;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 
-  URL.revokeObjectURL(url);
+    URL.revokeObjectURL(url);
+  }
 }
 </script>
 

@@ -12,8 +12,9 @@
         <span>{{ roleLabel }}</span>
       </div>
 
-      <button type="button" class="avatar-button">
-        {{ auth.userInitials }}
+      <button type="button" class="avatar-button" style="overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 0;">
+        <img v-if="auth.user?.profileImage" :src="auth.user.profileImage" alt="Avatar" style="width: 100%; height: 100%; object-fit: cover;" />
+        <template v-else>{{ auth.userInitials }}</template>
       </button>
 
       <ChevronDown :size="15" class="chevron" />
@@ -61,8 +62,8 @@ const portalLabel = computed(() => {
   return "Portal";
 });
 
-function handleLogout() {
-  auth.logout();
+async function handleLogout() {
+  await auth.logout();
   router.replace("/login");
 }
 </script>

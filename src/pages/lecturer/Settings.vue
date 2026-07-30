@@ -188,8 +188,12 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch } from "vue";
+import { computed, reactive, ref, watch, onMounted } from "vue";
+import { useAuthStore } from "../../stores/auth.store";
+import { updateUser } from "../../api/user.api";
+import { uploadPhoto as uploadPhotoApi, removePhoto as removePhotoApi, changePassword as changePasswordApi } from "../../api/auth.api";
 
+const authStore = useAuthStore();
 const STORAGE_KEY = "uniosun_lms_lecturer_settings_v1";
 
 const defaultSettings = {
@@ -220,6 +224,18 @@ const passwordError = ref("");
 const passwordSuccess = ref("");
 
 const settings = reactive(loadSettings());
+
+onMounted(() => {
+  if (authStore.user) {
+    const fullName = authStore.user.name || "";
+    const nameParts = fullName.split(" ");
+    settings.firstName = nameParts[0] || "";
+    settings.lastName = nameParts.slice(1).join(" ") || "";
+    settings.email = authStore.user.email || "";
+    settings.staffId = authStore.user.identifier || "";
+    settings.profilePhoto = authStore.user.profileImage || "";
+  }
+});
 
 const passwordForm = reactive({
   currentPassword: "",
@@ -279,7 +295,7 @@ function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-function handlePhotoUpload(event) {
+async function handlePhotoUpload(event) {
   const file = event.target.files?.[0];
 
   if (!file) return;
@@ -293,37 +309,64 @@ function handlePhotoUpload(event) {
     return;
   }
 
-  if (file.size > 2 * 1024 * 1024) {
-    profileError.value = "Profile photo cannot exceed 2MB.";
+  if (file.size > 200 * 1024) {
+    profileError.value = "Profile photo must be less than 200KB.";
     profileSuccess.value = "";
     event.target.value = "";
     return;
   }
 
-  const reader = new FileReader();
-
-  reader.onload = () => {
-    settings.profilePhoto = String(reader.result || "");
-    profileError.value = "";
-    profileSuccess.value = "Profile photo updated.";
-  };
-
-  reader.onerror = () => {
-    profileError.value = "Unable to read selected photo.";
-    profileSuccess.value = "";
-  };
-
-  reader.readAsDataURL(file);
+  if (import.meta.env.VITE_API_URL && authStore.user) {
+    const formData = new FormData();
+    formData.append("image", file);
+    try {
+      const res = await uploadPhotoApi(authStore.user.id, formData);
+      if (res.data && res.data.profileImage) {
+        settings.profilePhoto = res.data.profileImage;
+        authStore.user.profileImage = res.data.profileImage;
+        localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+        profileError.value = "";
+        profileSuccess.value = "Profile photo updated successfully!";
+      }
+    } catch (err) {
+      console.error("Failed to upload photo:", err);
+      profileError.value = err.response?.data?.error || err.message || "Failed to upload photo.";
+      profileSuccess.value = "";
+    }
+  } else {
+    const reader = new FileReader();
+    reader.onload = () => {
+      settings.profilePhoto = String(reader.result || "");
+      profileError.value = "";
+      profileSuccess.value = "Profile photo updated locally (Offline mode).";
+    };
+    reader.readAsDataURL(file);
+  }
   event.target.value = "";
 }
 
-function removePhoto() {
-  settings.profilePhoto = "";
-  profileError.value = "";
-  profileSuccess.value = "Profile photo removed.";
+async function removePhoto() {
+  if (import.meta.env.VITE_API_URL && authStore.user) {
+    try {
+      await removePhotoApi(authStore.user.id);
+      settings.profilePhoto = "";
+      authStore.user.profileImage = "";
+      localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+      profileError.value = "";
+      profileSuccess.value = "Profile photo removed successfully!";
+    } catch (err) {
+      console.error("Failed to remove photo:", err);
+      profileError.value = err.response?.data?.error || err.message || "Failed to remove photo.";
+      profileSuccess.value = "";
+    }
+  } else {
+    settings.profilePhoto = "";
+    profileError.value = "";
+    profileSuccess.value = "Profile photo removed locally (Offline mode).";
+  }
 }
 
-function updateProfile() {
+async function updateProfile() {
   profileError.value = "";
   profileSuccess.value = "";
 
@@ -342,26 +385,43 @@ function updateProfile() {
     return;
   }
 
-  if (!phoneNumber) {
-    profileError.value = "Phone number is required.";
-    return;
-  }
-
   if (!isValidEmail(email)) {
     profileError.value = "Enter a valid email address.";
     return;
   }
 
-  settings.firstName = firstName;
-  settings.lastName = lastName;
-  settings.phoneNumber = phoneNumber;
-  settings.email = email;
+  if (import.meta.env.VITE_API_URL && authStore.user) {
+    try {
+      const payload = {
+        name: `${firstName} ${lastName}`,
+        email: email,
+      };
+      const res = await updateUser(authStore.user.id, payload);
+      if (res.data && res.data.user) {
+        authStore.user.name = res.data.user.name;
+        authStore.user.email = res.data.user.email;
+        localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
 
-  saveSettings();
-  profileSuccess.value = "Profile updated successfully.";
+        settings.firstName = firstName;
+        settings.lastName = lastName;
+        settings.email = email;
+        profileSuccess.value = "Profile updated successfully!";
+      }
+    } catch (err) {
+      console.error("Failed to update profile:", err);
+      profileError.value = err.response?.data?.error || err.message || "Failed to update profile.";
+    }
+  } else {
+    settings.firstName = firstName;
+    settings.lastName = lastName;
+    settings.phoneNumber = phoneNumber;
+    settings.email = email;
+    saveSettings();
+    profileSuccess.value = "Profile updated successfully (Offline mode).";
+  }
 }
 
-function changePassword() {
+async function changePassword() {
   passwordError.value = "";
   passwordSuccess.value = "";
 
@@ -390,11 +450,29 @@ function changePassword() {
     return;
   }
 
-  passwordForm.currentPassword = "";
-  passwordForm.newPassword = "";
-  passwordForm.confirmPassword = "";
+  if (import.meta.env.VITE_API_URL) {
+    try {
+      const payload = {
+        currentPassword: passwordForm.currentPassword,
+        newPassword: passwordForm.newPassword,
+        confirmPassword: passwordForm.confirmPassword,
+      };
+      await changePasswordApi(payload);
 
-  passwordSuccess.value = "Password changed successfully.";
+      passwordForm.currentPassword = "";
+      passwordForm.newPassword = "";
+      passwordForm.confirmPassword = "";
+      passwordSuccess.value = "Password changed successfully!";
+    } catch (err) {
+      console.error("Failed to change password:", err);
+      passwordError.value = err.response?.data?.error || err.message || "Failed to change password.";
+    }
+  } else {
+    passwordForm.currentPassword = "";
+    passwordForm.newPassword = "";
+    passwordForm.confirmPassword = "";
+    passwordSuccess.value = "Password changed successfully (Offline mode).";
+  }
 }
 </script>
 

@@ -4,6 +4,7 @@ import {
   BookOpen,
   ClipboardCheck,
   Settings,
+  Users,
 } from "lucide-vue-next";
 
 export function buildLecturerMenu(courses = []) {
@@ -27,6 +28,11 @@ export function buildLecturerMenu(courses = []) {
         path: `/lecturer/courses/${course.id}/materials`,
       })),
     },
+    // {
+    //   label: "Users",
+    //   icon: Users,
+    //   path: "/lecturer/users",
+    // },
     {
       label: "Test",
       icon: ClipboardCheck,
