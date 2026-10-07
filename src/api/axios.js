@@ -30,6 +30,9 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       // token expired or invalid
       localStorage.removeItem("lms_token");
+      localStorage.removeItem("uniosun_lms_auth");
+      localStorage.removeItem("uniosun_lms_lecturer_workspace_v1");
+      localStorage.removeItem("uniosun_lms_student_v1");
       window.location.href = "/login";
     }
 

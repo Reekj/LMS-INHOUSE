@@ -88,7 +88,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, onMounted } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import { useStudentTestsStore } from "../../stores/studentTests.store";
@@ -99,11 +99,17 @@ const testsStore = useStudentTestsStore();
 
 const testId = computed(() => String(route.params.testId || ""));
 
+onMounted(async () => {
+  if (testId.value) {
+    await testsStore.fetchTestResultsAction(testId.value);
+  }
+});
+
 const result = computed(() => testsStore.getResultByTestId(testId.value));
 
-const questions = computed(() => testsStore.questions);
+const questions = computed(() => result.value?.review || []);
 
-const currentIndex = ref(8);
+const currentIndex = ref(0);
 
 const currentQuestion = computed(() => questions.value[currentIndex.value]);
 

@@ -111,6 +111,18 @@ const routes = [
         component: () => import("../pages/student/Dashboard.vue"),
       },
       {
+        path: "courses",
+        component: () => import("../pages/student/Courses.vue"),
+      },
+      {
+        path: "my-courses",
+        component: () => import("../pages/student/Courses.vue"),
+      },
+      {
+        path: "catalogue",
+        component: () => import("../pages/student/Courses.vue"),
+      },
+      {
         path: "calendar",
         component: () => import("../pages/student/Calendar.vue"),
       },

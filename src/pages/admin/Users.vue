@@ -62,7 +62,9 @@
             </div>
           </td>
 
-          <td>{{ user.role }}</td>
+          <td><AppBadge :type="user.role === 'Student' ? 'success' : user.role === 'Lecturer' ? 'warning' : 'danger'">
+              {{ user.role }}
+            </AppBadge></td>
           <td>
             <div style="font-weight: 800; color: #1e293b; font-size: 13.5px;">{{ user.department }}</div>
             <div style="font-size: 11.5px; color: #64748b; margin-top: 1px;">{{ user.faculty }}</div>

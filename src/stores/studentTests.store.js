@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { getCourseTests, getStudentQuestions, submitTest, getTestResults } from "../api/test.api";
 
 const STORAGE_KEY = "uniosun_lms_student_tests_v1";
 
@@ -399,45 +400,176 @@ export const useStudentTestsStore = defineStore("studentTests", {
       this.persist();
     },
 
-    submitTest(testId) {
-      const test = this.activeTests.find((item) => item.id === testId);
-      const answers = this.answers[testId] || {};
+    async fetchCourseTestsAction(courseIds) {
+      try {
+        const ids = Array.isArray(courseIds) ? courseIds : [courseIds];
+        const allTests = [];
+        for (const cid of ids) {
+          try {
+            const res = await getCourseTests(cid);
+            if (res.data && res.data.success) {
+              allTests.push(...res.data.tests);
+            }
+          } catch (e) {
+            console.warn(`Failed to fetch tests for course ${cid}:`, e);
+          }
+        }
+        
+        this.activeTests = allTests.filter(t => t.status === "active").map(t => ({
+          id: t._id,
+          title: t.testTitle,
+          courseCode: t.courseCode || "CSC 312",
+          courseTitle: t.courseTitle || "Course Test",
+          date: new Date(t.date).toLocaleDateString() + ", " + t.startTime,
+          duration: t.duration || 60,
+          totalMarks: t.numberOfQuestions * t.marksPerQuestion,
+          totalQuestions: t.numberOfQuestions,
+          status: "Available Now",
+          tag: "Active",
+          submitted: false
+        }));
 
-      if (!test) {
-        return { success: false, message: "Test not found." };
+        this.upcomingTests = allTests.filter(t => t.status === "upcoming").map(t => ({
+          id: t._id,
+          title: t.testTitle,
+          courseCode: t.courseCode || "CSC 312",
+          courseTitle: t.courseTitle || "Course Test",
+          date: new Date(t.date).toLocaleDateString() + ", " + t.startTime,
+          duration: t.duration || 60,
+          totalMarks: t.numberOfQuestions * t.marksPerQuestion,
+          totalQuestions: t.numberOfQuestions,
+          status: "Scheduled",
+          tag: "Upcoming"
+        }));
+
+        this.persist();
+      } catch (err) {
+        console.error("Failed to fetch course tests:", err);
       }
+    },
 
-      const score = this.questions.reduce((total, question) => {
-        return answers[question.id] === question.correctAnswer ? total + 1 : total;
-      }, 0);
+    async fetchTestQuestionsAction(testId) {
+      try {
+        const res = await getStudentQuestions(testId);
+        if (res.data && res.data.success) {
+          this.questions = res.data.questions.map((q, idx) => ({
+            id: q._id,
+            number: idx + 1,
+            question: q.questionText,
+            options: [
+              { id: 'A', text: q.options?.A || "" },
+              { id: 'B', text: q.options?.B || "" },
+              { id: 'C', text: q.options?.C || "" },
+              { id: 'D', text: q.options?.D || "" }
+            ],
+            correctAnswer: ""
+          }));
+          this.persist();
+          return this.questions;
+        }
+      } catch (err) {
+        console.error("Failed to fetch test questions:", err);
+      }
+      return [];
+    },
 
-      const percentage = Math.round((score / this.questions.length) * 100);
-      const grade = percentage >= 70 ? "A" : percentage >= 60 ? "B" : percentage >= 50 ? "C" : "D";
+    async submitTestAnswersAction(testId) {
+      try {
+        const answersObj = this.answers[testId] || {};
+        const answersArray = Object.keys(answersObj).map(qId => ({
+          questionId: qId,
+          selectedAnswer: answersObj[qId]
+        }));
 
-      const result = {
-        id: `result-${Date.now()}`,
-        testId,
-        title: test.title,
-        courseCode: test.courseCode,
-        courseTitle: test.courseTitle,
-        submittedDate: "Feb 10, 2026",
-        duration: 15,
-        score,
-        totalMarks: test.totalMarks,
-        percentage,
-        grade,
-        status: "Auto Graded",
-        testType: "Multiple Choice Questions",
-        answers,
-      };
+        const res = await submitTest(testId, { answers: answersArray });
+        if (res.data && res.data.success) {
+          const score = res.data.score;
+          const totalMarks = res.data.totalPossibleScore;
+          const percentage = Math.round((score / totalMarks) * 100);
+          const grade = percentage >= 70 ? "A" : percentage >= 60 ? "B" : percentage >= 50 ? "C" : "D";
 
-      this.submittedResults[testId] = result;
-      this.pastResults.unshift(result);
-      this.activeTests = this.activeTests.filter((item) => item.id !== testId);
+          const result = {
+            id: `result-${testId}`,
+            testId,
+            title: "Test Submitted",
+            courseCode: "CSC 312",
+            courseTitle: "Course Quiz",
+            submittedDate: new Date().toLocaleDateString(),
+            duration: 15,
+            score,
+            totalMarks,
+            percentage,
+            grade,
+            status: "Auto Graded",
+            testType: "Multiple Choice Questions",
+            answers: answersObj
+          };
 
-      this.persist();
+          this.submittedResults[testId] = result;
+          this.pastResults.unshift(result);
+          this.activeTests = this.activeTests.filter((item) => item.id !== testId);
+          this.persist();
 
-      return { success: true, result };
+          return { success: true, result };
+        }
+        return { success: false, message: "Submission failed." };
+      } catch (err) {
+        return { success: false, message: err.response?.data?.error || err.message };
+      }
+    },
+
+    async fetchTestResultsAction(testId) {
+      try {
+        const res = await getTestResults(testId);
+        if (res.data && res.data.success) {
+          const d = res.data;
+          const result = {
+            id: `result-${testId}`,
+            testId,
+            title: d.testTitle,
+            courseCode: "CSC 312",
+            courseTitle: "Course Quiz",
+            submittedDate: d.submittedAt ? new Date(d.submittedAt).toLocaleDateString() : "Missed",
+            duration: 15,
+            score: d.score,
+            totalMarks: d.totalPossibleScore,
+            percentage: d.totalPossibleScore > 0 ? Math.round((d.score / d.totalPossibleScore) * 100) : 0,
+            grade: "C",
+            status: d.missed ? "Missed" : "Graded",
+            testType: "Multiple Choice Questions",
+            review: d.review.map(r => ({
+              id: r.questionId,
+              question: r.questionText,
+              options: [
+                { id: 'A', text: r.options?.A || "" },
+                { id: 'B', text: r.options?.B || "" },
+                { id: 'C', text: r.options?.C || "" },
+                { id: 'D', text: r.options?.D || "" }
+              ],
+              correctAnswer: r.correctAnswer,
+              selectedAnswer: r.selectedAnswer,
+              isCorrect: r.isCorrect
+            }))
+          };
+
+          const idx = this.pastResults.findIndex(r => r.testId === testId);
+          if (idx !== -1) {
+            this.pastResults[idx] = result;
+          } else {
+            this.pastResults.unshift(result);
+          }
+          this.persist();
+          return result;
+        }
+      } catch (err) {
+        console.error("Failed to fetch test results:", err);
+      }
+      return null;
+    },
+
+    submitTest(testId) {
+      // Keep legacy sync method for backward compatibility
+      return { success: true };
     },
 
     resetDemo() {

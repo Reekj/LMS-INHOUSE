@@ -111,7 +111,7 @@ const mappedBroadcasts = computed(() => {
 });
 
 const combinedNotifications = computed(() => {
-  return [...mappedBroadcasts.value, ...studentStore.notifications];
+  return mappedBroadcasts.value;
 });
 
 const filteredNotifications = computed(() => {

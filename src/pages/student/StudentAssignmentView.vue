@@ -227,6 +227,7 @@ const router = useRouter();
 const studentStore = useStudentStore();
 
 const fileInput = ref(null);
+const selectedFile = ref(null);
 const selectedFileName = ref("");
 const comments = ref("");
 const errorMessage = ref("");
@@ -234,6 +235,18 @@ const successMessage = ref("");
 const joinModalOpen = ref(false);
 const joinCode = ref("");
 const joinError = ref("");
+
+onMounted(async () => {
+  if (assignmentId.value) {
+    // If we don't have assignments list fully fetched from backend, ensure it's loaded
+    await studentStore.fetchAssignments(courseId.value);
+    
+    const currentAssign = studentStore.getAssignmentById(assignmentId.value);
+    if (currentAssign && currentAssign.type === "group") {
+      await studentStore.fetchMyGroup(assignmentId.value);
+    }
+  }
+});
 
 const courseId = computed(() => String(route.params.courseId || ""));
 const assignmentId = computed(() => String(route.params.assignmentId || ""));
@@ -302,6 +315,7 @@ function acceptFile(file) {
     return;
   }
 
+  selectedFile.value = file;
   selectedFileName.value = file.name;
   errorMessage.value = "";
 }
@@ -324,18 +338,19 @@ function saveDraft() {
   successMessage.value = "Draft saved successfully.";
 }
 
-function submitAssignment() {
+async function submitAssignment() {
   if (!assignment.value) return;
 
-  if (!selectedFileName.value && !assignment.value.submittedFileName) {
+  if (!selectedFile.value && !assignment.value.submittedFileName) {
     errorMessage.value = "Please upload your assignment file.";
     successMessage.value = "";
     return;
   }
 
-  const result = studentStore.submitAssignment(assignment.value.id, {
+  const result = await studentStore.submitAssignment(assignment.value.id, {
     comments: comments.value,
     fileName: selectedFileName.value || assignment.value.submittedFileName,
+    file: selectedFile.value
   });
 
   if (!result.success) {
@@ -346,12 +361,13 @@ function submitAssignment() {
 
   errorMessage.value = "";
   successMessage.value = "Assignment submitted successfully.";
+  selectedFile.value = null;
 }
 
-function createGroup() {
+async function createGroup() {
   if (!assignment.value) return;
 
-  const result = studentStore.createGroup(assignment.value.id);
+  const result = await studentStore.createGroup(assignment.value.id);
 
   if (!result.success) {
     errorMessage.value = result.message;
@@ -368,10 +384,10 @@ function closeJoinModal() {
   joinError.value = "";
 }
 
-function joinGroup() {
+async function joinGroup() {
   if (!assignment.value) return;
 
-  const result = studentStore.joinGroup(assignment.value.id, joinCode.value);
+  const result = await studentStore.joinGroup(assignment.value.id, joinCode.value);
 
   if (!result.success) {
     joinError.value = result.message;

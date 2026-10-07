@@ -124,8 +124,8 @@ const testId = computed(() => String(route.params.testId || ""));
 const test = computed(() => testsStore.getActiveTestById(testId.value));
 const questions = computed(() => testsStore.questions);
 
-const currentIndex = ref(7);
-const remainingSeconds = ref(8);
+const currentIndex = ref(0);
+const remainingSeconds = ref(3600);
 const confirmOpen = ref(false);
 let timer = null;
 
@@ -149,8 +149,11 @@ const formattedTime = computed(() => {
     .join(":");
 });
 
-onMounted(() => {
-  seedDemoAnswers();
+onMounted(async () => {
+  const qs = await testsStore.fetchTestQuestionsAction(testId.value);
+  if (test.value) {
+    remainingSeconds.value = test.value.duration * 60;
+  }
 
   timer = window.setInterval(() => {
     if (remainingSeconds.value <= 0) {
@@ -166,24 +169,6 @@ onMounted(() => {
 onUnmounted(() => {
   if (timer) clearInterval(timer);
 });
-
-function seedDemoAnswers() {
-  const demoAnswers = {
-    q1: "B",
-    q2: "C",
-    q3: "A",
-    q4: "C",
-    q5: "B",
-    q6: "A",
-    q7: "B",
-  };
-
-  Object.entries(demoAnswers).forEach(([questionId, optionId]) => {
-    if (!answers.value[questionId]) {
-      testsStore.answerQuestion(testId.value, questionId, optionId);
-    }
-  });
-}
 
 function selectAnswer(optionId) {
   testsStore.answerQuestion(testId.value, currentQuestion.value.id, optionId);
@@ -216,8 +201,8 @@ function submitTest() {
   confirmOpen.value = true;
 }
 
-function confirmSubmit() {
-  const result = testsStore.submitTest(testId.value);
+async function confirmSubmit() {
+  const result = await testsStore.submitTestAnswersAction(testId.value);
 
   if (result.success) {
     router.push(`/student/test/${testId.value}/result`);

@@ -1,7 +1,10 @@
 import { defineStore } from "pinia";
-import { getCourses } from "../api/course.api";
+import { useAuthStore } from "./auth.store";
+import { getCourses, getCourseGrades } from "../api/course.api";
 import { getAllUsers } from "../api/user.api";
 import { getEvents } from "../api/event.api";
+import { getCourseAssignments, getMyGroup, createGroup, joinGroup, submitAssignment } from "../api/assignment.api";
+import { getCourseForumPosts, createForumPost, likeForumPost, addForumComment } from "../api/forum.api";
 
 const STORAGE_KEY = "uniosun_lms_student_v1";
 const LECTURER_MATERIALS_KEY = "uniosun_lms_lecturer_materials_v1";
@@ -939,13 +942,11 @@ export const useStudentStore = defineStore("student", {
 
     async fetchStudentDataFromDB(studentId, enrolledCourseIds = []) {
       try {
-        const [coursesRes, usersRes, eventsRes] = await Promise.all([
+        const [coursesRes, eventsRes] = await Promise.all([
           getCourses(),
-          getAllUsers(),
           getEvents()
         ]);
         const allCourses = coursesRes.data.courses || [];
-        const allUsers = usersRes.data.users || [];
 
         // Filter courses that are enrolled by this student
         const myCourses = allCourses.filter(c => enrolledCourseIds.includes(c._id));
@@ -1091,184 +1092,368 @@ export const useStudentStore = defineStore("student", {
       this.persist();
     },
 
-    toggleDiscussionLike(postId) {
-      const post = this.discussions.find((item) => item.id === postId);
-
-      if (!post) return;
-
-      post.liked = !post.liked;
-      post.likes = Math.max(0, Number(post.likes || 0) + (post.liked ? 1 : -1));
-
-      this.persist();
-    },
-
-    createDiscussionPost(payload) {
-      const body = sanitizeLongText(payload.body);
-
-      if (!body) {
-        return { success: false, message: "Post cannot be empty." };
-      }
-
-      const post = {
-        id: `disc-${Date.now()}`,
-        courseId: sanitizeText(payload.courseId),
-        authorName: this.currentStudent.name,
-        authorRole: "student",
-        initials: this.currentStudent.initials,
-        type: sanitizeText(payload.type || "Question"),
-        body,
-        timeLabel: "Now",
-        likes: 0,
-        liked: false,
-        replies: [],
-      };
-
-      this.discussions.unshift(post);
-      this.persist();
-
-      return { success: true, post };
-    },
-
-    createGroup(assignmentId) {
-      const assignment = this.assignments.find((item) => item.id === assignmentId);
-
-      if (!assignment || assignment.type !== "group") {
-        return { success: false, message: "Assignment not found." };
-      }
-
-      if (assignment.groupId) {
-        return { success: false, message: "You already belong to a group." };
-      }
-
-      const inviteCode = makeInviteCode();
-
-      const group = {
-        id: `grp-${Date.now()}`,
-        assignmentId,
-        name: `Group ${Math.floor(1 + Math.random() * 9)}`,
-        inviteCode,
-        maxMembers: 5,
-        members: [
-          {
-            id: this.currentStudent.id,
-            name: this.currentStudent.name,
-            matricNo: this.currentStudent.matricNo,
-            initials: this.currentStudent.initials,
-            leader: true,
-          },
-        ],
-      };
-
-      this.groups.push(group);
-
-      assignment.studentGroupStatus = "leader";
-      assignment.groupId = group.id;
-      assignment.inviteCode = inviteCode;
-      assignment.isLeader = true;
-
-      this.persist();
-
-      return { success: true, group };
-    },
-
-    joinGroup(assignmentId, code) {
-      const assignment = this.assignments.find((item) => item.id === assignmentId);
-      const safeCode = sanitizeText(code).toUpperCase();
-
-      const group = this.groups.find(
-        (item) =>
-          item.assignmentId === assignmentId &&
-          item.inviteCode.toUpperCase() === safeCode
-      );
-
-      if (!assignment || !group) {
-        return { success: false, message: "Invalid invite code." };
-      }
-
-      const alreadyMember = group.members.some(
-        (member) => member.id === this.currentStudent.id
-      );
-
-      if (!alreadyMember) {
-        if (group.members.length >= group.maxMembers) {
-          return { success: false, message: "This group is already full." };
+    async fetchCourseGrades(courseId) {
+      try {
+        const res = await getCourseGrades(courseId);
+        if (res.data && res.data.success) {
+          this.grades = res.data.grades.map(g => ({
+            id: g.name + g.date,
+            courseId,
+            title: g.name,
+            type: g.type === 'test' ? 'Test' : 'Assignment',
+            date: new Date(g.date).toLocaleDateString(),
+            maxScore: g.maxScore,
+            score: g.score,
+            status: g.score !== null ? 'Graded' : 'Pending',
+            feedback: g.feedback || ""
+          }));
+          this.persist();
         }
-
-        group.members.push({
-          id: this.currentStudent.id,
-          name: this.currentStudent.name,
-          matricNo: this.currentStudent.matricNo,
-          initials: this.currentStudent.initials,
-          leader: false,
-        });
+      } catch (err) {
+        console.error("Failed to fetch course grades:", err);
       }
+    },
 
-      assignment.studentGroupStatus = "member";
-      assignment.groupId = group.id;
-      assignment.inviteCode = group.inviteCode;
-      assignment.isLeader = false;
+    async fetchCourseForum(courseId) {
+      try {
+        const res = await getCourseForumPosts(courseId);
+        if (res.data && res.data.success) {
+          // Clear existing discussions for this course first to avoid duplicates
+          this.discussions = this.discussions.filter(d => d.courseId !== courseId);
+          
+          const authStore = useAuthStore();
+          const currentUserId = authStore.user?.id || this.currentStudent.id;
 
-      this.persist();
+          const newDiscussions = res.data.posts.map(p => {
+            const initials = p.author?.name ? p.author.name.split(" ").filter(Boolean).map(n => n[0]).join("").toUpperCase().slice(0, 2) : "AN";
+            return {
+              id: p._id,
+              courseId: p.course,
+              type: p.postType ? (p.postType.charAt(0).toUpperCase() + p.postType.slice(1)) : "General",
+              body: p.content,
+              title: p.title,
+              authorName: p.author?.name || "Anonymous",
+              authorRole: p.author?.role || "student",
+              initials,
+              timeLabel: new Date(p.createdAt).toLocaleDateString(),
+              likes: p.likes?.length || 0,
+              liked: p.likes?.includes(currentUserId) || false,
+              officialAnswer: p.officialAnswer,
+              replies: p.comments ? p.comments.map(c => {
+                const commentInitials = c.author?.name ? c.author.name.split(" ").filter(Boolean).map(n => n[0]).join("").toUpperCase().slice(0, 2) : "AN";
+                return {
+                  id: c._id,
+                  authorName: c.author?.name || "Anonymous",
+                  authorRole: c.author?.role || "student",
+                  initials: commentInitials,
+                  body: c.content,
+                  timeLabel: new Date(c.createdAt).toLocaleDateString()
+                };
+              }) : []
+            };
+          });
 
-      return { success: true, group };
+          this.discussions.unshift(...newDiscussions);
+          this.persist();
+        }
+      } catch (err) {
+        console.error("Failed to fetch course forum from DB:", err);
+      }
+    },
+
+    async toggleDiscussionLike(postId) {
+      try {
+        const res = await likeForumPost(postId);
+        if (res.data && res.data.success) {
+          const post = this.discussions.find(item => item.id === postId);
+          if (post) {
+            post.liked = res.data.liked;
+            post.likes = res.data.likesCount;
+            this.persist();
+          }
+        }
+      } catch (err) {
+        console.error("Failed to toggle discussion like on DB, falling back to local toggle:", err);
+        const post = this.discussions.find(item => item.id === postId);
+        if (post) {
+          post.liked = !post.liked;
+          post.likes = post.liked ? post.likes + 1 : Math.max(0, post.likes - 1);
+          this.persist();
+        }
+      }
+    },
+
+    async createDiscussionPost(payload) {
+      const body = sanitizeLongText(payload.body);
+      if (!body) return { success: false, message: "Post content is required." };
+      const title = payload.title || sanitizeText(payload.body).slice(0, 50);
+
+      try {
+        const res = await createForumPost({
+          courseId: payload.courseId,
+          title,
+          content: body,
+          postType: (payload.type || "general").toLowerCase()
+        });
+
+        if (res.data && res.data.success) {
+          const p = res.data.post;
+          const authStore = useAuthStore();
+          const initials = authStore.userInitials || this.currentStudent.initials;
+          const post = {
+            id: p._id,
+            courseId: p.course,
+            type: p.postType ? (p.postType.charAt(0).toUpperCase() + p.postType.slice(1)) : "General",
+            body: p.content,
+            title: p.title,
+            authorName: authStore.userName || this.currentStudent.name,
+            authorRole: authStore.userRole || "student",
+            initials,
+            timeLabel: "Now",
+            likes: 0,
+            liked: false,
+            replies: []
+          };
+          this.discussions.unshift(post);
+          this.persist();
+          return { success: true, post };
+        }
+        throw new Error("Failed to save post to backend.");
+      } catch (err) {
+        console.warn("createDiscussionPost API failed, falling back to local fallback:", err);
+        const authStore = useAuthStore();
+        const initials = authStore.userInitials || this.currentStudent.initials;
+        const localPost = {
+          id: `disc-local-${Date.now()}`,
+          courseId: payload.courseId,
+          type: payload.type || "General",
+          body,
+          title,
+          authorName: authStore.userName || this.currentStudent.name,
+          authorRole: authStore.userRole || "student",
+          initials,
+          timeLabel: "Now",
+          likes: 0,
+          liked: false,
+          replies: []
+        };
+        this.discussions.unshift(localPost);
+        this.persist();
+        return { success: true, post: localPost };
+      }
+    },
+
+    async addDiscussionReply(postId, content) {
+      if (!content) return { success: false, message: "Reply content is required." };
+      const cleaned = sanitizeLongText(content);
+
+      try {
+        const res = await addForumComment(postId, { content: cleaned });
+        if (res.data && res.data.success) {
+          const comment = res.data.comment;
+          const post = this.discussions.find(item => item.id === postId);
+          if (post) {
+            const authStore = useAuthStore();
+            const initials = authStore.userInitials || this.currentStudent.initials;
+            if (!post.replies) post.replies = [];
+            post.replies.push({
+              id: comment._id,
+              authorName: authStore.userName || this.currentStudent.name,
+              authorRole: authStore.userRole || "student",
+              initials,
+              body: comment.content,
+              timeLabel: "Now"
+            });
+            this.persist();
+          }
+          return { success: true };
+        }
+        throw new Error("Failed to save reply comment to backend.");
+      } catch (err) {
+        console.warn("addDiscussionReply API failed, falling back to local fallback:", err);
+        const post = this.discussions.find(item => item.id === postId);
+        if (post) {
+          const authStore = useAuthStore();
+          const initials = authStore.userInitials || this.currentStudent.initials;
+          if (!post.replies) post.replies = [];
+          post.replies.push({
+            id: `reply-local-${Date.now()}`,
+            authorName: authStore.userName || this.currentStudent.name,
+            authorRole: authStore.userRole || "student",
+            initials,
+            body: cleaned,
+            timeLabel: "Now"
+          });
+          this.persist();
+          return { success: true };
+        }
+        return { success: false, message: "Failed to add local reply." };
+      }
+    },
+
+    async fetchAssignments(courseId) {
+      try {
+        const res = await getCourseAssignments(courseId);
+        if (res.data && res.data.success) {
+          this.assignments = res.data.assignments.map(a => {
+            return {
+              id: a._id,
+              courseId: a.course,
+              courseCode: this.courses.find(c => c.id === a.course)?.code || "",
+              title: a.title,
+              due: new Date(a.dueDate).toLocaleDateString(),
+              maxScore: a.groupSize ? 100 : 20,
+              status: "Not Submitted",
+              type: a.isGroupAssignment ? "group" : "individual",
+              instructions: a.description || "",
+              fileTypes: "PDF, DOCX",
+              maxSize: "10 MB",
+              comments: "",
+              submittedFileName: "",
+              feedback: "",
+              studentGroupStatus: a.isGroupAssignment ? "none" : null,
+              groupId: null,
+              inviteCode: "",
+              isLeader: false
+            };
+          });
+          this.persist();
+        }
+      } catch (err) {
+        console.error("Failed to fetch assignments:", err);
+      }
+    },
+
+    async fetchMyGroup(assignmentId) {
+      try {
+        const res = await getMyGroup(assignmentId);
+        if (res.data && res.data.success) {
+          const g = res.data.group;
+          const assignment = this.assignments.find(a => a.id === assignmentId);
+          if (assignment) {
+            assignment.groupId = g._id;
+            assignment.inviteCode = g.code;
+            assignment.isLeader = g.leader?._id === this.currentStudent.id || g.leader === this.currentStudent.id;
+            assignment.studentGroupStatus = assignment.isLeader ? "leader" : "member";
+          }
+          const existingGrpIdx = this.groups.findIndex(item => item.id === g._id);
+          const mappedGroup = {
+            id: g._id,
+            assignmentId,
+            name: `Group - ${g.code}`,
+            inviteCode: g.code,
+            maxMembers: 5,
+            members: g.members.map(m => ({
+              id: m._id || m,
+              name: m.name || "Student",
+              matricNo: m.identifier || "",
+              initials: m.name ? m.name.split(" ").filter(Boolean).map(n => n[0]).join("").toUpperCase().slice(0, 2) : "ST",
+              leader: (g.leader?._id || g.leader) === (m._id || m)
+            }))
+          };
+          if (existingGrpIdx !== -1) {
+            this.groups[existingGrpIdx] = mappedGroup;
+          } else {
+            this.groups.push(mappedGroup);
+          }
+          this.persist();
+          return g;
+        }
+      } catch (err) {
+        // Silent fail
+      }
+      return null;
+    },
+
+    async createGroup(assignmentId) {
+      try {
+        const res = await createGroup(assignmentId);
+        if (res.data && res.data.success) {
+          const g = res.data.group;
+          const assignment = this.assignments.find(a => a.id === assignmentId);
+          if (assignment) {
+            assignment.groupId = g._id;
+            assignment.inviteCode = g.code;
+            assignment.isLeader = true;
+            assignment.studentGroupStatus = "leader";
+          }
+          const group = {
+            id: g._id,
+            assignmentId,
+            name: `Group - ${g.code}`,
+            inviteCode: g.code,
+            maxMembers: 5,
+            members: [
+              {
+                id: this.currentStudent.id,
+                name: this.currentStudent.name,
+                matricNo: this.currentStudent.matricNo,
+                initials: this.currentStudent.initials,
+                leader: true
+              }
+            ]
+          };
+          this.groups.push(group);
+          this.persist();
+          return { success: true, group };
+        }
+        return { success: false, message: "Failed to create group." };
+      } catch (err) {
+        return { success: false, message: err.response?.data?.error || err.message };
+      }
+    },
+
+    async joinGroup(assignmentId, code) {
+      try {
+        const res = await joinGroup(assignmentId, code);
+        if (res.data && res.data.success) {
+          const assignment = this.assignments.find(a => a.id === assignmentId);
+          if (assignment) {
+            assignment.groupId = res.data.group._id;
+            assignment.inviteCode = res.data.group.code;
+            assignment.isLeader = false;
+            assignment.studentGroupStatus = "member";
+          }
+          await this.fetchMyGroup(assignmentId);
+          return { success: true };
+        }
+        return { success: false, message: "Failed to join group." };
+      } catch (err) {
+        return { success: false, message: err.response?.data?.error || err.message };
+      }
     },
 
     saveSubmissionDraft(assignmentId, payload) {
       const assignment = this.assignments.find((item) => item.id === assignmentId);
-
-      if (!assignment) {
-        return { success: false, message: "Assignment not found." };
-      }
-
+      if (!assignment) return { success: false, message: "Assignment not found." };
       assignment.comments = sanitizeLongText(payload.comments);
       assignment.submittedFileName = sanitizeText(payload.fileName);
       assignment.draftSaved = true;
-
       this.persist();
-
       return { success: true };
     },
 
-    submitAssignment(assignmentId, payload) {
-      const assignment = this.assignments.find((item) => item.id === assignmentId);
+    async submitAssignment(assignmentId, payload) {
+      try {
+        const assignment = this.assignments.find(item => item.id === assignmentId);
+        if (!assignment) return { success: false, message: "Assignment not found." };
 
-      if (!assignment) {
-        return { success: false, message: "Assignment not found." };
+        const formData = new FormData();
+        formData.append("file", payload.file);
+
+        const res = await submitAssignment(assignmentId, formData);
+        if (res.data && res.data.success) {
+          assignment.comments = sanitizeLongText(payload.comments);
+          assignment.submittedFileName = sanitizeText(payload.fileName);
+          assignment.status = "Submitted";
+          assignment.submittedAt = new Date().toISOString();
+          this.persist();
+          return { success: true };
+        }
+        return { success: false, message: "Failed to submit assignment." };
+      } catch (err) {
+        return { success: false, message: err.response?.data?.error || err.message };
       }
-
-      if (assignment.type === "group" && assignment.studentGroupStatus === "member") {
-        return {
-          success: false,
-          message: "Only your group leader can submit this group assignment.",
-        };
-      }
-
-      assignment.comments = sanitizeLongText(payload.comments);
-      assignment.submittedFileName = sanitizeText(payload.fileName);
-      assignment.status = "Submitted";
-      assignment.submittedAt = new Date().toISOString();
-
-      const gradeRecord = this.grades.find(
-        (item) => item.id === `grade-${assignment.id}`
-      );
-
-      if (!gradeRecord) {
-        this.grades.push({
-          id: `grade-${assignment.id}`,
-          courseId: assignment.courseId,
-          title: assignment.title,
-          type: "Assignment",
-          date: assignment.due,
-          maxScore: assignment.maxScore || 20,
-          score: "",
-          status: "Pending",
-          feedback: "",
-        });
-      }
-
-      this.persist();
-
-      return { success: true };
     },
   },
 });

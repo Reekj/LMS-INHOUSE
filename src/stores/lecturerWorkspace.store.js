@@ -1,4 +1,12 @@
 import { defineStore } from "pinia";
+import { useAuthStore } from "./auth.store";
+import { 
+  getCourseForumPosts, 
+  createForumPost, 
+  likeForumPost, 
+  addForumComment, 
+  deleteForumPost 
+} from "../api/forum.api";
 
 const STORAGE_KEY = "uniosun_lms_lecturer_workspace_v1";
 
@@ -307,13 +315,9 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
     },
 
     getDiscussionsByCourse: (state) => (courseId) => {
-      const courseDiscussions = state.discussions.filter(
+      return state.discussions.filter(
         (item) => item.courseId === courseId
       );
-
-      if (courseDiscussions.length) return courseDiscussions;
-
-      return buildDefaultDiscussions(courseId);
     },
 
     getGradeBookByCourse: (state) => (courseId) => {
@@ -341,12 +345,184 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
       );
     },
 
-    ensureDefaultDiscussions(courseId) {
-      const exists = this.discussions.some((item) => item.courseId === courseId);
+    async fetchCourseForum(courseId) {
+      try {
+        const res = await getCourseForumPosts(courseId);
+        if (res.data && res.data.success) {
+          // Clear existing discussions for this course first to avoid duplicates
+          this.discussions = this.discussions.filter(d => d.courseId !== courseId);
+          
+          const authStore = useAuthStore();
+          const currentUserId = authStore.user?.id;
 
-      if (!exists) {
-        this.discussions.unshift(...buildDefaultDiscussions(courseId));
+          const newDiscussions = res.data.posts.map(p => {
+            const initials = p.author?.name ? p.author.name.split(" ").filter(Boolean).map(n => n[0]).join("").toUpperCase().slice(0, 2) : "AN";
+            return {
+              id: p._id,
+              courseId: p.course,
+              type: p.postType.charAt(0).toUpperCase() + p.postType.slice(1),
+              body: p.content,
+              title: p.title,
+              authorName: p.author?.name || "Anonymous",
+              authorRole: p.author?.role || "student",
+              initials,
+              timeLabel: new Date(p.createdAt).toLocaleDateString(),
+              likes: p.likes?.length || 0,
+              likedByCurrentLecturer: p.likes?.includes(currentUserId) || false,
+              targetType: p.targetType || 'course',
+              targetLabel: p.targetLabel || 'Entire Course',
+              replies: p.comments ? p.comments.map(c => {
+                const commentInitials = c.author?.name ? c.author.name.split(" ").filter(Boolean).map(n => n[0]).join("").toUpperCase().slice(0, 2) : "AN";
+                return {
+                  id: c._id,
+                  authorName: c.author?.name || "Anonymous",
+                  authorRole: c.author?.role || "student",
+                  initials: commentInitials,
+                  body: c.content,
+                  timeLabel: new Date(c.createdAt).toLocaleDateString()
+                };
+              }) : []
+            };
+          });
+          
+          this.discussions.unshift(...newDiscussions);
+          this.persist();
+        }
+      } catch (err) {
+        console.error("Failed to fetch course forum:", err);
+      }
+    },
+
+    async createDiscussionPost(payload) {
+      const body = sanitizeLongText(payload.body);
+      if (!body) return { success: false, message: "Post content is required." };
+      const title = payload.title || sanitizeText(payload.body).slice(0, 50);
+
+      try {
+        const res = await createForumPost({
+          courseId: payload.courseId,
+          title,
+          content: body,
+          postType: (payload.type || "general").toLowerCase(),
+          targetType: payload.targetType || 'course',
+          targetLabel: payload.targetLabel || 'Entire Course'
+        });
+
+        if (res.data && res.data.success) {
+          await this.fetchCourseForum(payload.courseId);
+          return { success: true };
+        }
+        throw new Error("Failed to save post to backend.");
+      } catch (err) {
+        console.warn("createDiscussionPost API failed, falling back to local fallback:", err);
+        const authStore = useAuthStore();
+        const initials = authStore.userInitials || "FA";
+        const localPost = {
+          id: `disc-local-${Date.now()}`,
+          courseId: payload.courseId,
+          type: payload.type || "General",
+          body,
+          title,
+          authorName: authStore.userName || "Dr. Folake Adesanya",
+          authorRole: authStore.userRole || "lecturer",
+          initials,
+          timeLabel: "Now",
+          likes: 0,
+          likedByCurrentLecturer: false,
+          targetType: payload.targetType || 'course',
+          targetLabel: payload.targetLabel || 'Entire Course',
+          replies: []
+        };
+        this.discussions.unshift(localPost);
         this.persist();
+        return { success: true, post: localPost };
+      }
+    },
+
+    async toggleDiscussionLike(postId) {
+      try {
+        const res = await likeForumPost(postId);
+        if (res.data && res.data.success) {
+          const post = this.discussions.find(item => item.id === postId);
+          if (post) {
+            post.likedByCurrentLecturer = res.data.liked;
+            post.likes = res.data.likesCount;
+            this.persist();
+          }
+        }
+      } catch (err) {
+        console.error("Failed to toggle discussion like, falling back to local toggle:", err);
+        const post = this.discussions.find(item => item.id === postId);
+        if (post) {
+          post.likedByCurrentLecturer = !post.likedByCurrentLecturer;
+          post.likes = post.likedByCurrentLecturer ? post.likes + 1 : Math.max(0, post.likes - 1);
+          this.persist();
+        }
+      }
+    },
+
+    async addDiscussionReply(postId, content) {
+      if (!content) return { success: false, message: "Reply content is required." };
+      const cleaned = sanitizeLongText(content);
+
+      try {
+        const res = await addForumComment(postId, { content: cleaned });
+        if (res.data && res.data.success) {
+          const comment = res.data.comment;
+          const post = this.discussions.find(item => item.id === postId);
+          if (post) {
+            if (!post.replies) post.replies = [];
+            const commentInitials = comment.author?.name ? comment.author.name.split(" ").filter(Boolean).map(n => n[0]).join("").toUpperCase().slice(0, 2) : "AN";
+            
+            post.replies.push({
+              id: comment._id,
+              authorName: comment.author?.name || "Anonymous",
+              authorRole: comment.author?.role || "student",
+              initials: commentInitials,
+              body: comment.content,
+              timeLabel: "Now"
+            });
+            this.persist();
+          }
+          return { success: true };
+        }
+        throw new Error("Failed to save reply comment to backend.");
+      } catch (err) {
+        console.warn("addDiscussionReply API failed, falling back to local fallback:", err);
+        const post = this.discussions.find(item => item.id === postId);
+        if (post) {
+          const authStore = useAuthStore();
+          const initials = authStore.userInitials || "FA";
+          if (!post.replies) post.replies = [];
+          post.replies.push({
+            id: `reply-local-${Date.now()}`,
+            authorName: authStore.userName || "Dr. Folake Adesanya",
+            authorRole: authStore.userRole || "lecturer",
+            initials,
+            body: cleaned,
+            timeLabel: "Now"
+          });
+          this.persist();
+          return { success: true };
+        }
+        return { success: false, message: "Failed to add local reply." };
+      }
+    },
+
+    async deleteDiscussionPost(postId) {
+      try {
+        const res = await deleteForumPost(postId);
+        if (res.data && res.data.success) {
+          this.discussions = this.discussions.filter(item => item.id !== postId);
+          this.persist();
+          return { success: true };
+        }
+        throw new Error("Failed to delete post from backend.");
+      } catch (err) {
+        console.warn("deleteDiscussionPost API failed, falling back to local delete:", err);
+        this.discussions = this.discussions.filter(item => item.id !== postId);
+        this.persist();
+        return { success: true };
       }
     },
 

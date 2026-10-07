@@ -62,7 +62,7 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ClipboardList, FileCheck2 } from "lucide-vue-next";
 
@@ -71,6 +71,12 @@ import { useStudentStore } from "../../stores/student.store";
 const route = useRoute();
 const router = useRouter();
 const studentStore = useStudentStore();
+
+onMounted(async () => {
+  if (courseId.value) {
+    await studentStore.fetchAssignments(courseId.value);
+  }
+});
 
 const courseId = computed(() => String(route.params.courseId || ""));
 

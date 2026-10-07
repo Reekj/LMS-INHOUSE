@@ -208,8 +208,7 @@ const visibleTimetableGroups = computed(() => {
 });
 
 onMounted(() => {
-  showNotificationPopup.value = true;
-  startPopupTimer();
+  // Auto-triggering popups on dashboard mount is disabled
 });
 
 onBeforeUnmount(() => {

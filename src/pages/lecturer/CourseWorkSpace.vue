@@ -147,6 +147,14 @@
       </div>
     </section>
 
+    <section v-if="activeSection === 'discussion'">
+      <DiscussionBoard
+        :course="activeCourse"
+        :currentLecturer="currentLecturer"
+        :lecturerCourses="lecturerCourses"
+      />
+    </section>
+
     <section v-if="activeSection === 'videos'" class="videos-page">
       <div v-if="courseVideos.length" class="videos-layout">
         <main>
@@ -732,6 +740,7 @@ import {
 } from "lucide-vue-next";
 
 import AssignmentGradingView from "../../pages/lecturer/AssignmentGradingView.vue";
+import DiscussionBoard from "../../pages/lecturer/DiscussionBoard.vue";
 import { useLecturerCoursesStore } from "../../stores/lecturerCourses.store";
 import { useLecturerMaterialsStore } from "../../stores/lecturerMaterials.store";
 import { useLecturerWorkspaceStore } from "../../stores/lecturerWorkspace.store";

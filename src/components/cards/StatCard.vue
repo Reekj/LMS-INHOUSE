@@ -29,7 +29,7 @@ defineProps({
   title: String,
   value: String,
   subtitle: String,
-  icon: Object,
+  icon: [Object, Function],
   color: String,
 });
 </script>

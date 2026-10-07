@@ -23,3 +23,8 @@ export const uploadMaterial = (courseCode, formData) => {
 export const getMaterialDownloadUrl = (key, download = false) => {
   return api.get(`/courses/material/download?key=${encodeURIComponent(key)}${download ? "&download=true" : ""}`);
 };
+
+export const getCourseGrades = (courseId, studentId = null) => {
+  const url = `/courses/${courseId}/grades${studentId ? `?studentId=${studentId}` : ""}`;
+  return api.get(url);
+};

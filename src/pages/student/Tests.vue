@@ -155,7 +155,7 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
+import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import {
   ArrowRight,
@@ -165,11 +165,19 @@ import {
 } from "lucide-vue-next";
 
 import { useStudentTestsStore } from "../../stores/studentTests.store";
+import { useAuthStore } from "../../stores/auth.store";
 
 const router = useRouter();
 const testsStore = useStudentTestsStore();
+const authStore = useAuthStore();
 
 const activeTab = ref("active");
+
+onMounted(async () => {
+  if (authStore.user && authStore.user.enrolledCourses) {
+    await testsStore.fetchCourseTestsAction(authStore.user.enrolledCourses);
+  }
+});
 
 function takeTest(testId) {
   router.push(`/student/test/${testId}/take`);

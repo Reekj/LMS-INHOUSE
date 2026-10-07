@@ -141,8 +141,12 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch } from "vue";
+import { reactive, ref, watch, onMounted } from "vue";
+import { useAuthStore } from "../../stores/auth.store";
+import { changePassword as apiChangePassword, uploadPhoto as uploadPhotoApi, removePhoto as removePhotoApi } from "../../api/auth.api";
+import { updateUser } from "../../api/user.api";
 
+const authStore = useAuthStore();
 const STORAGE_KEY = "uniosun_lms_student_settings_v1";
 
 const photoInput = ref(null);
@@ -153,14 +157,14 @@ const passwordMessage = ref("");
 const passwordError = ref("");
 
 const form = reactive({
-  initials: "TA",
-  department: "Computer Science",
-  level: "300",
-  matricNo: "CSC/2020/0042",
-  firstName: "Adeyinka",
-  lastName: "Oladapo",
-  phone: "+234 803 456 7890",
-  email: "a.oladapo@uniosun.edu.ng",
+  initials: "",
+  department: "",
+  level: "",
+  matricNo: "",
+  firstName: "",
+  lastName: "",
+  phone: "",
+  email: "",
 });
 
 const password = reactive({
@@ -192,7 +196,22 @@ const notifications = reactive([
   },
 ]);
 
-loadSettings();
+onMounted(() => {
+  if (authStore.user) {
+    const fullName = authStore.user.name || "";
+    const nameParts = fullName.split(" ");
+    form.firstName = nameParts[0] || "";
+    form.lastName = nameParts.slice(1).join(" ") || "";
+    form.email = authStore.user.email || "";
+    form.matricNo = authStore.user.identifier || "";
+    form.department = authStore.user.department || "Computer Science";
+    form.level = authStore.user.level || "100L";
+    form.phone = authStore.user.phone || "";
+    form.initials = authStore.userInitials || "";
+    profilePhoto.value = authStore.user.profileImage || "";
+  }
+  loadSettings();
+});
 
 watch(
   notifications,
@@ -252,7 +271,7 @@ function persistSettings() {
   );
 }
 
-function handlePhotoUpload(event) {
+async function handlePhotoUpload(event) {
   const file = event.target.files?.[0];
   event.target.value = "";
 
@@ -270,26 +289,68 @@ function handlePhotoUpload(event) {
     return;
   }
 
-  const reader = new FileReader();
+  if (import.meta.env.VITE_API_URL && authStore.user) {
+    const formData = new FormData();
+    formData.append("image", file);
+    try {
+      const res = await uploadPhotoApi(authStore.user.id, formData);
+      if (res.data && res.data.profileImage) {
+        profilePhoto.value = res.data.profileImage;
+        authStore.user.profileImage = res.data.profileImage;
+        localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+        profileError.value = "";
+        profileMessage.value = "Profile photo updated successfully!";
+        persistSettings();
+      }
+    } catch (err) {
+      console.error("Failed to upload photo:", err);
+      profileError.value = err.response?.data?.error || err.message || "Failed to upload photo.";
+      profileMessage.value = "";
+    }
+  } else {
+    const reader = new FileReader();
+    reader.onload = () => {
+      profilePhoto.value = String(reader.result || "");
+      profileError.value = "";
+      profileMessage.value = "Profile photo updated locally (Offline mode).";
+      persistSettings();
+      if (authStore.user) {
+        authStore.user.profileImage = profilePhoto.value;
+        localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+}
 
-  reader.onload = () => {
-    profilePhoto.value = String(reader.result || "");
+async function removePhoto() {
+  if (import.meta.env.VITE_API_URL && authStore.user) {
+    try {
+      await removePhotoApi(authStore.user.id);
+      profilePhoto.value = "";
+      authStore.user.profileImage = "";
+      localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+      profileError.value = "";
+      profileMessage.value = "Profile photo removed successfully!";
+      persistSettings();
+    } catch (err) {
+      console.error("Failed to remove photo:", err);
+      profileError.value = err.response?.data?.error || err.message || "Failed to remove photo.";
+      profileMessage.value = "";
+    }
+  } else {
+    profilePhoto.value = "";
+    profileMessage.value = "Profile photo removed.";
     profileError.value = "";
-    profileMessage.value = "Profile photo updated.";
     persistSettings();
-  };
-
-  reader.readAsDataURL(file);
+    if (authStore.user) {
+      authStore.user.profileImage = "";
+      localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+    }
+  }
 }
 
-function removePhoto() {
-  profilePhoto.value = "";
-  profileMessage.value = "Profile photo removed.";
-  profileError.value = "";
-  persistSettings();
-}
-
-function updateProfile() {
+async function updateProfile() {
   profileError.value = "";
   profileMessage.value = "";
 
@@ -308,6 +369,27 @@ function updateProfile() {
     return;
   }
 
+  if (import.meta.env.VITE_API_URL && authStore.user) {
+    try {
+      const payload = {
+        name: `${firstName} ${lastName}`,
+        email: email,
+        phone: phone,
+      };
+      const res = await updateUser(authStore.user.id, payload);
+      if (res.data && res.data.user) {
+        authStore.user.name = res.data.user.name;
+        authStore.user.email = res.data.user.email;
+        authStore.user.phone = res.data.user.phone || phone;
+        localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+      }
+    } catch (err) {
+      console.error("Failed to update student profile:", err);
+      profileError.value = err.response?.data?.error || err.message || "Failed to update profile.";
+      return;
+    }
+  }
+
   form.firstName = firstName;
   form.lastName = lastName;
   form.phone = phone;
@@ -318,7 +400,7 @@ function updateProfile() {
   persistSettings();
 }
 
-function changePassword() {
+async function changePassword() {
   passwordError.value = "";
   passwordMessage.value = "";
 
@@ -337,10 +419,27 @@ function changePassword() {
     return;
   }
 
-  password.current = "";
-  password.new = "";
-  password.confirm = "";
-  passwordMessage.value = "Password changed successfully.";
+  if (import.meta.env.VITE_API_URL) {
+    try {
+      await apiChangePassword({
+        currentPassword: password.current,
+        newPassword: password.new,
+        confirmPassword: password.confirm,
+      });
+      passwordMessage.value = "Password changed successfully.";
+      password.current = "";
+      password.new = "";
+      password.confirm = "";
+    } catch (err) {
+      console.error("Failed to change password:", err);
+      passwordError.value = err.response?.data?.error || err.message || "Failed to update password.";
+    }
+  } else {
+    password.current = "";
+    password.new = "";
+    password.confirm = "";
+    passwordMessage.value = "Password changed successfully (Mock).";
+  }
 }
 </script>
 
