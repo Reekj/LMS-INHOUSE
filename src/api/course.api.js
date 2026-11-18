@@ -4,6 +4,11 @@ export const getCourses = () => {
   return api.get("/courses");
 };
 
+// Only the courses the signed-in student is enrolled in.
+export const getMyCourses = () => {
+  return api.get("/courses/mine");
+};
+
 export const enrollCourse = (payload) => {
   const body = typeof payload === "object" ? payload : { courseId: payload };
   return api.post("/courses/enroll", body);

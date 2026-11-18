@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { loginUser, logoutUser } from "../api/auth.api";
 import { setToken, clearToken } from "../utils/token";
+import { clearStudentCaches } from "../utils/studentCache";
 
 const STORAGE_KEY = "uniosun_lms_auth";
 
@@ -80,15 +81,20 @@ export const useAuthStore = defineStore("auth", {
           localStorage.setItem(STORAGE_KEY, JSON.stringify({ user, token }));
           return user.role; // Return the role so the component can redirect
         } catch (err) {
-          // If it's a validation error or unauthorized role, throw it to the user
-          if (err.response && (err.response.status === 400 || err.response.status === 403 || err.response.status === 404)) {
-            throw new Error(err.response.data.error || "Invalid credentials.");
+          // With a backend configured, never fall back to the demo accounts:
+          // a failed login must look like a failed login.
+          if (err.response) {
+            const { status, data } = err.response;
+            if ([400, 403, 404].includes(status)) {
+              throw new Error(data?.error || "Invalid credentials.", { cause: err });
+            }
+            throw new Error(data?.error || "The server could not complete your sign-in. Please try again.", { cause: err });
           }
-          console.warn("Backend API login failed. Falling back to offline mock mode.", err);
+          throw new Error("Cannot reach the server. Check your connection and try again.", { cause: err });
         }
       }
 
-      // Offline Fallback / Mock Login Mode
+      // Offline demo mode: only when no backend is configured (VITE_API_URL unset).
       let role = "student";
       if (email.includes("admin") || email.includes("sola")) {
         role = "admin";
@@ -178,8 +184,17 @@ export const useAuthStore = defineStore("auth", {
       this.isAuthenticated = false;
       clearToken();
       localStorage.removeItem(STORAGE_KEY);
-      localStorage.removeItem("uniosun_lms_student_v1");
-      localStorage.removeItem("uniosun_lms_student_settings_v1");
+      clearStudentCaches();
+
+      // Empty the in-memory student stores too (imported lazily: they import this store).
+      const [{ useStudentStore }, { useStudentTestsStore }, { useNotificationsStore }] = await Promise.all([
+        import("./student.store"),
+        import("./studentTests.store"),
+        import("./notifications.store"),
+      ]);
+      useStudentStore().$reset();
+      useStudentTestsStore().$reset();
+      useNotificationsStore().$reset();
 
       if (import.meta.env.VITE_API_URL && token && !token.startsWith("dummy_")) {
         try {

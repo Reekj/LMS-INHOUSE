@@ -20,15 +20,13 @@
           @click="openNotifications"
         >
           <div class="popup-icon" :class="notification.type">
-            <FileText v-if="notification.type === 'assignment' || notification.type === 'material'" :size="17" />
-            <BarChart3 v-else-if="notification.type === 'grade'" :size="17" />
-            <Megaphone v-else-if="notification.type === 'discussion'" :size="17" />
+            <Megaphone v-if="notification.type === 'announcement'" :size="17" />
             <ClipboardCheck v-else :size="17" />
           </div>
 
           <div>
-            <strong>{{ notification.shortTitle }}</strong>
-            <p>{{ notification.popupMeta }}</p>
+            <strong>{{ notification.title }}</strong>
+            <p>{{ notification.time }}</p>
           </div>
         </article>
 
@@ -40,8 +38,8 @@
 
     <div class="welcome-row">
       <div>
-        <h1>Good Morning {{ student.firstName }}</h1>
-        <p>Sunday, 29 March 2026</p>
+        <h1>{{ greeting }}{{ student.firstName ? ` ${student.firstName}` : "" }}</h1>
+        <p>{{ todayLabel }}</p>
       </div>
     </div>
 
@@ -54,7 +52,7 @@
         <div>
           <span>ENROLLED COURSES</span>
           <strong>{{ studentStore.enrolledCoursesCount }}</strong>
-          <p>1st Semester Courses</p>
+          <p>{{ studentStore.enrolledCoursesCount === 1 ? "Course" : "Courses" }} you are enrolled in</p>
         </div>
       </article>
 
@@ -66,7 +64,7 @@
         <div>
           <span>ASSIGNMENT DUE</span>
           <strong class="purple-text">{{ studentStore.pendingAssignmentsCount }}</strong>
-          <p>Next due in 2 days</p>
+          <p>{{ nextAssignmentLabel }}</p>
         </div>
       </article>
 
@@ -78,7 +76,7 @@
         <div>
           <span>TEST UPCOMING</span>
           <strong class="green-text">{{ studentStore.upcomingTestsCount }}</strong>
-          <p>in 5 days</p>
+          <p>{{ nextTestLabel }}</p>
         </div>
       </article>
     </div>
@@ -106,7 +104,11 @@
           </div>
         </div>
 
-        <section class="timetable-list">
+        <p v-if="!visibleTimetableGroups.length" class="empty-note">
+          No classes scheduled for your courses in the next 7 days.
+        </p>
+
+        <section v-else class="timetable-list">
           <article
             v-for="group in visibleTimetableGroups"
             :key="`${group.day}-${group.date}`"
@@ -136,6 +138,10 @@
       <aside class="deadline-card">
         <h2>Upcoming Deadline</h2>
 
+        <p v-if="!studentStore.deadlines.length" class="empty-note">
+          No upcoming tests or assignments.
+        </p>
+
         <article
           v-for="deadline in studentStore.deadlines"
           :key="deadline.id"
@@ -160,16 +166,15 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import {
-  BarChart3,
   BookMarked,
   BookOpen,
   ClipboardCheck,
   ClipboardList,
-  FileText,
   Megaphone,
 } from "lucide-vue-next";
 
 import { useStudentStore } from "../../stores/student.store";
+import { useNotificationsStore } from "../../stores/notifications.store";
 import { useAuthStore } from "../../stores/auth.store";
 
 const router = useRouter();
@@ -195,7 +200,47 @@ const student = computed(() => {
   }
   return storeStudent;
 });
-const popupNotifications = computed(() => studentStore.popupNotifications);
+const notificationsStore = useNotificationsStore();
+const popupNotifications = computed(() => notificationsStore.items.slice(0, 4));
+
+const greeting = computed(() => {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good Morning";
+  if (hour < 17) return "Good Afternoon";
+  return "Good Evening";
+});
+
+const todayLabel = new Date().toLocaleDateString(undefined, {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
+
+// "today", "tomorrow" or "in N days" until a date.
+function relativeDays(date) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const target = new Date(date);
+  target.setHours(0, 0, 0, 0);
+  const days = Math.round((target - start) / 86400000);
+  if (days <= 0) return "today";
+  if (days === 1) return "tomorrow";
+  return `in ${days} days`;
+}
+
+const nextAssignmentLabel = computed(() => {
+  const now = Date.now();
+  const next = studentStore.assignments
+    .filter((item) => item.dueDate && new Date(item.dueDate).getTime() >= now)
+    .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate))[0];
+  return next ? `Next due ${relativeDays(next.dueDate)}` : "Nothing due";
+});
+
+const nextTestLabel = computed(() => {
+  const next = studentStore.tests[0];
+  return next ? `Next ${relativeDays(`${next.date}T00:00:00`)}` : "No tests scheduled";
+});
 
 const timetableGroups = computed(() => Object.values(studentStore.groupedTimetable));
 
@@ -249,7 +294,7 @@ function openNotifications() {
 }
 
 function markAllRead() {
-  studentStore.markAllNotificationsRead();
+  notificationsStore.markAllRead();
 }
 </script>
 
@@ -257,6 +302,14 @@ function markAllRead() {
 .student-dashboard {
   position: relative;
   color: #0f172a;
+}
+
+.empty-note {
+  margin: 0;
+  padding: 18px 0;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .notification-popup {

@@ -170,9 +170,9 @@
             <label class="form-label">
               Post Type
               <select v-model="postForm.type" class="form-select">
-                <option>Question</option>
-                <option>Announcement</option>
-                <option>General</option>
+                <option value="Question">Question (no notification)</option>
+                <option value="Announcement">Announcement (notifies everyone in the course)</option>
+                <option value="General">General (notifies the students)</option>
               </select>
             </label>
 

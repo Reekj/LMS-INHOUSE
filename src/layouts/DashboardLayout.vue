@@ -5,10 +5,11 @@
         <div class="brand-top">
           <div class="logo-container">
             <img :src="nextItLogo" alt="LMS Logo" class="logo-img" />
-            <span class="brand-text">{{ auth.user?.institution?.name || "University LMS" }}</span>
+            <span class="brand-text">{{ brandName }}</span>
           </div>
 
           <span v-if="isAdmin" class="lms-pill">LMS</span>
+          <span v-else-if="isPlatformAdmin" class="lms-pill">PLATFORM</span>
         </div>
       </div>
 
@@ -35,6 +36,7 @@
             v-else
             :to="item.path"
             class="menu-link"
+            :class="{ active: item.matchNested && route.path.startsWith(`${item.path}/`) }"
             active-class="active"
           >
             <component :is="item.icon" :size="18" :stroke-width="1.8" />
@@ -55,7 +57,7 @@
         </div>
       </nav>
 
-      <div class="session-label">
+      <div v-if="!isPlatformAdmin" class="session-label">
         2025/2026 Session - Semester 2
       </div>
     </aside>
@@ -78,6 +80,7 @@ import nextItLogo from "../assets/Next-it-logo.avif";
 
 import AppNavbar from "../components/common/AppNavbar.vue";
 import { adminMenu } from "../constants/adminMenu";
+import { platformMenu } from "../constants/platformMenu";
 import { buildLecturerMenu } from "../constants/lecturerMenu";
 import { buildStudentMenu } from "../constants/studentMenu";
 import { useAuthStore } from "../stores/auth.store";
@@ -93,6 +96,11 @@ const studentStore = useStudentStore();
 const openMenus = reactive({});
 
 const isAdmin = computed(() => auth.userRole === "admin");
+const isPlatformAdmin = computed(() => auth.userRole === "platform_admin");
+const brandName = computed(() => {
+  if (isPlatformAdmin.value) return "LMS Platform";
+  return auth.user?.institution?.name || "University LMS";
+});
 
 const menu = computed(() => {
   if (auth.userRole === "lecturer") {
@@ -101,6 +109,10 @@ const menu = computed(() => {
 
   if (auth.userRole === "student") {
     return buildStudentMenu(studentStore.courses);
+  }
+
+  if (auth.userRole === "platform_admin") {
+    return platformMenu;
   }
 
   return adminMenu;

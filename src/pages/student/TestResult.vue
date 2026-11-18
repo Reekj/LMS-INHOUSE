@@ -1,14 +1,26 @@
 <template>
-  <section v-if="result" class="test-result-page">
+  <section v-if="loading" class="not-found">
+    <h1>Loading result...</h1>
+  </section>
+
+  <section v-else-if="!result" class="not-found">
+    <h1>{{ loadError || "Result not found" }}</h1>
+    <RouterLink to="/student/test">Back to Tests</RouterLink>
+  </section>
+
+  <section v-else class="test-result-page">
     <button type="button" class="back-btn" @click="goBack">
       ←
     </button>
 
     <section class="result-banner">
       <div>
-        <h2>{{ result.courseCode }} — Past Result</h2>
+        <h2>{{ result.courseCode }} — {{ result.title }}</h2>
         <h1>{{ result.courseTitle }}</h1>
-        <p>Submitted: {{ result.submittedDate }} · Duration: {{ result.duration }} mins</p>
+        <p>
+          {{ result.missed ? "You did not take this test" : `Submitted: ${result.submittedDate}` }}
+          <template v-if="result.duration"> · Duration: {{ result.duration }} mins</template>
+        </p>
       </div>
 
       <div class="score-box">
@@ -18,15 +30,39 @@
       </div>
     </section>
 
-    <div class="result-layout">
+    <section class="summary-row">
+      <div class="summary-item correct">
+        <strong>{{ result.correctCount }}</strong>
+        <span>Correct</span>
+      </div>
+      <div class="summary-item wrong">
+        <strong>{{ wrongCount }}</strong>
+        <span>Wrong</span>
+      </div>
+      <div class="summary-item skipped">
+        <strong>{{ questions.length - result.answeredCount }}</strong>
+        <span>Not answered</span>
+      </div>
+      <div class="summary-item">
+        <strong>{{ questions.length }}</strong>
+        <span>Questions</span>
+      </div>
+    </section>
+
+    <div v-if="currentQuestion" class="result-layout">
       <main class="review-card">
-        <p class="question-number">
-          Question {{ currentIndex + 1 }} of {{ questions.length }}
-        </p>
+        <div class="question-head">
+          <p class="question-number">
+            Question {{ currentIndex + 1 }} of {{ questions.length }}
+          </p>
+          <span class="verdict" :class="questionStatus(currentQuestion)">
+            {{ verdictLabel(currentQuestion) }}
+          </span>
+        </div>
 
         <h2>{{ currentQuestion.question }}</h2>
 
-        <div class="options-list">
+        <div v-if="currentQuestion.options.length" class="options-list">
           <div
             v-for="option in currentQuestion.options"
             :key="option.id"
@@ -34,8 +70,22 @@
             :class="resultOptionClass(option.id)"
           >
             <span>{{ option.id }}</span>
-            {{ option.text }}
+            <div class="option-text">
+              {{ option.text }}
+              <small v-if="option.id === currentQuestion.correctAnswer" class="option-note">Correct answer</small>
+              <small
+                v-if="option.id === currentQuestion.selectedAnswer"
+                class="option-note"
+              >
+                Your answer
+              </small>
+            </div>
           </div>
+        </div>
+
+        <div v-else class="text-answers">
+          <p><strong>Your answer:</strong> {{ currentQuestion.selectedAnswer || "Not answered" }}</p>
+          <p><strong>Expected answer:</strong> {{ currentQuestion.correctAnswer }}</p>
         </div>
 
         <div class="review-actions">
@@ -67,7 +117,7 @@
             v-for="(question, index) in questions"
             :key="question.id"
             type="button"
-            :class="{ current: index === currentIndex }"
+            :class="[questionStatus(question), { current: index === currentIndex }]"
             @click="currentIndex = index"
           >
             {{ index + 1 }}
@@ -75,15 +125,12 @@
         </div>
 
         <div class="legend-row">
-          <span><i></i> Current</span>
+          <span><i class="correct"></i> Correct</span>
+          <span><i class="wrong"></i> Wrong</span>
+          <span><i class="skipped"></i> Not answered</span>
         </div>
       </aside>
     </div>
-  </section>
-
-  <section v-else class="not-found">
-    <h1>Result not found</h1>
-    <RouterLink to="/student/test">Back to Tests</RouterLink>
   </section>
 </template>
 
@@ -98,37 +145,37 @@ const router = useRouter();
 const testsStore = useStudentTestsStore();
 
 const testId = computed(() => String(route.params.testId || ""));
-
-onMounted(async () => {
-  if (testId.value) {
-    await testsStore.fetchTestResultsAction(testId.value);
-  }
-});
-
-const result = computed(() => testsStore.getResultByTestId(testId.value));
-
-const questions = computed(() => result.value?.review || []);
-
+const loading = ref(true);
+const loadError = ref("");
 const currentIndex = ref(0);
 
-const currentQuestion = computed(() => questions.value[currentIndex.value]);
-
-const resultAnswers = computed(() => {
-  if (result.value?.answers) return result.value.answers;
-
-  return questions.value.reduce((answers, question) => {
-    answers[question.id] = question.resultAnswer || question.correctAnswer;
-    return answers;
-  }, {});
+onMounted(async () => {
+  const { error } = await testsStore.fetchTestResultsAction(testId.value);
+  loadError.value = error;
+  loading.value = false;
 });
 
+const result = computed(() => (loadError.value ? null : testsStore.getResultByTestId(testId.value)));
+const questions = computed(() => result.value?.review || []);
+const currentQuestion = computed(() => questions.value[currentIndex.value]);
+const wrongCount = computed(() => result.value.answeredCount - result.value.correctCount);
+
+function questionStatus(question) {
+  if (question.selectedAnswer === null || question.selectedAnswer === "") return "skipped";
+  return question.isCorrect ? "correct" : "wrong";
+}
+
+function verdictLabel(question) {
+  const status = questionStatus(question);
+  if (status === "correct") return "Correct";
+  if (status === "wrong") return "Wrong";
+  return "Not answered";
+}
+
 function resultOptionClass(optionId) {
-  const answer = resultAnswers.value[currentQuestion.value.id];
-  const correct = currentQuestion.value.correctAnswer;
-
-  if (optionId === correct) return "correct";
-  if (optionId === answer && optionId !== correct) return "wrong";
-
+  const { correctAnswer, selectedAnswer } = currentQuestion.value;
+  if (optionId === correctAnswer) return "correct";
+  if (optionId === selectedAnswer) return "wrong";
   return "";
 }
 
@@ -145,7 +192,7 @@ function nextQuestion() {
 }
 
 function goBack() {
-  router.push("/student/test");
+  router.push({ path: "/student/test", query: { tab: "past" } });
 }
 </script>
 
@@ -422,6 +469,139 @@ function goBack() {
 
   .result-layout {
     grid-template-columns: 1fr;
+  }
+}
+
+.summary-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.summary-item {
+  padding: 16px 18px;
+  border: 1px solid #d5deeb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.summary-item strong {
+  display: block;
+  font-size: 26px;
+  font-weight: 900;
+  color: #0f172a;
+}
+
+.summary-item span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.summary-item.correct strong {
+  color: #16a34a;
+}
+
+.summary-item.wrong strong {
+  color: #dc2626;
+}
+
+.summary-item.skipped strong {
+  color: #94a3b8;
+}
+
+.question-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.verdict {
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.verdict.correct {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.verdict.wrong {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.verdict.skipped {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.option-text {
+  display: grid;
+  gap: 2px;
+}
+
+.option-note {
+  font-size: 11px;
+  font-weight: 800;
+  opacity: 0.8;
+}
+
+.text-answers p {
+  margin: 0 0 10px;
+  color: #334155;
+}
+
+.navigator-grid button.correct {
+  border-color: #86efac;
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.navigator-grid button.wrong {
+  border-color: #fca5a5;
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.navigator-grid button.skipped {
+  color: #94a3b8;
+}
+
+/* Keep the correct/wrong colour and mark the selected question with an outline. */
+.navigator-grid button.current {
+  outline: 2px solid #0875f5;
+  outline-offset: 2px;
+}
+
+.navigator-grid button.current.skipped {
+  background: #0875f5;
+  border-color: #0875f5;
+  color: white;
+}
+
+.legend-row i.correct {
+  background: #dcfce7;
+  border: 1px solid #86efac;
+}
+
+.legend-row i.wrong {
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+}
+
+.legend-row i.skipped {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+}
+
+@media (max-width: 700px) {
+  .summary-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

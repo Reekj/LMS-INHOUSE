@@ -430,28 +430,11 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
         }
         throw new Error("Failed to save post to backend.");
       } catch (err) {
-        console.warn("createDiscussionPost API failed, falling back to local fallback:", err);
-        const authStore = useAuthStore();
-        const initials = authStore.userInitials || "FA";
-        const localPost = {
-          id: `disc-local-${Date.now()}`,
-          courseId: payload.courseId,
-          type: payload.type || "General",
-          body,
-          title,
-          authorName: authStore.userName || "Dr. Folake Adesanya",
-          authorRole: authStore.userRole || "lecturer",
-          initials,
-          timeLabel: "Now",
-          likes: 0,
-          likedByCurrentLecturer: false,
-          targetType: payload.targetType || 'course',
-          targetLabel: payload.targetLabel || 'Entire Course',
-          replies: []
+        // Report the failure: a post kept only in this browser reaches nobody.
+        return {
+          success: false,
+          message: err.response?.data?.error || "Your post could not be sent. Please try again.",
         };
-        this.discussions.unshift(localPost);
-        this.persist();
-        return { success: true, post: localPost };
       }
     },
 
@@ -504,24 +487,10 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
         }
         throw new Error("Failed to save reply comment to backend.");
       } catch (err) {
-        console.warn("addDiscussionReply API failed, falling back to local fallback:", err);
-        const post = this.discussions.find(item => item.id === postId);
-        if (post) {
-          const authStore = useAuthStore();
-          const initials = authStore.userInitials || "FA";
-          if (!post.replies) post.replies = [];
-          post.replies.push({
-            id: `reply-local-${Date.now()}`,
-            authorName: authStore.userName || "Dr. Folake Adesanya",
-            authorRole: authStore.userRole || "lecturer",
-            initials,
-            body: cleaned,
-            timeLabel: "Now"
-          });
-          this.persist();
-          return { success: true };
-        }
-        return { success: false, message: "Failed to add local reply." };
+        return {
+          success: false,
+          message: err.response?.data?.error || "Your reply could not be sent. Please try again.",
+        };
       }
     },
 
@@ -878,97 +847,6 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
       this.persist();
 
       return { success: true };
-    },
-
-    createDiscussionPost(payload) {
-      const body = sanitizeLongText(payload.body);
-
-      if (!body) {
-        return { success: false, message: "Post cannot be empty." };
-      }
-
-      const post = {
-        id: `disc-${Date.now()}`,
-        courseId: sanitizeText(payload.courseId),
-        authorId: sanitizeText(payload.authorId || "lec-001"),
-        authorName: sanitizeText(payload.authorName || "Lecturer"),
-        authorRole: sanitizeText(payload.authorRole || "lecturer"),
-        initials: getInitials(payload.authorName || "Lecturer"),
-        type: sanitizeText(payload.type || "Question"),
-        targetType: sanitizeText(payload.targetType || "course"),
-        targetLabel: sanitizeText(payload.targetLabel || "Entire Course"),
-        body,
-        likes: 0,
-        likedByCurrentLecturer: false,
-        createdAt: new Date().toISOString(),
-        timeLabel: "Now",
-        replies: [],
-      };
-
-      this.discussions.unshift(post);
-      this.persist();
-
-      return { success: true, post };
-    },
-
-    createDiscussionReply(postId, payload) {
-      const post = this.discussions.find((item) => item.id === postId);
-      const body = sanitizeLongText(payload.body);
-
-      if (!post) {
-        return { success: false, message: "Post not found." };
-      }
-
-      if (!body) {
-        return { success: false, message: "Reply cannot be empty." };
-      }
-
-      post.replies.push({
-        id: `reply-${Date.now()}`,
-        authorId: sanitizeText(payload.authorId || "lec-001"),
-        authorName: sanitizeText(payload.authorName || "Lecturer"),
-        authorRole: sanitizeText(payload.authorRole || "lecturer"),
-        initials: getInitials(payload.authorName || "Lecturer"),
-        body,
-        createdAt: new Date().toISOString(),
-        timeLabel: "Now",
-      });
-
-      this.persist();
-
-      return { success: true };
-    },
-
-    createQuickReply(payload) {
-      return this.createDiscussionPost({
-        ...payload,
-        type: "Question",
-        targetType: "course",
-        targetLabel: "Entire Course",
-      });
-    },
-
-    toggleDiscussionLike(postId) {
-      const post = this.discussions.find((item) => item.id === postId);
-
-      if (!post) {
-        return { success: false, message: "Post not found." };
-      }
-
-      post.likedByCurrentLecturer = !post.likedByCurrentLecturer;
-      post.likes = Math.max(
-        0,
-        Number(post.likes || 0) + (post.likedByCurrentLecturer ? 1 : -1)
-      );
-
-      this.persist();
-
-      return { success: true };
-    },
-
-    deleteDiscussionPost(postId) {
-      this.discussions = this.discussions.filter((item) => item.id !== postId);
-      this.persist();
     },
   },
 });

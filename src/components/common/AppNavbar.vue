@@ -77,6 +77,14 @@
           <div class="dropdown-header">
             <h3>Notifications</h3>
             <span v-if="unreadCount > 0">{{ unreadCount }} new</span>
+            <button
+              v-if="unreadCount > 0"
+              type="button"
+              class="mark-all-btn"
+              @click.stop="notificationsStore.markAllRead()"
+            >
+              Mark all read
+            </button>
           </div>
           <div class="dropdown-body">
             <template v-if="notifications.length > 0">
@@ -85,18 +93,16 @@
                 :key="item.id" 
                 class="notification-item"
                 :class="{ unread: item.unread }"
-                @click="markAsRead(item)"
+                @click="openNotification(item)"
               >
                 <div class="item-icon" :class="item.type">
                   <Megaphone v-if="item.type === 'announcement'" :size="14" />
-                  <FileText v-else-if="item.type === 'assignment' || item.type === 'material'" :size="14" />
-                  <BarChart3 v-else-if="item.type === 'grade'" :size="14" />
-                  <MessageSquare v-else-if="item.type === 'discussion'" :size="14" />
+                  <MessageSquare v-else-if="item.type === 'discussion' || item.type === 'reply'" :size="14" />
                   <Bell v-else :size="14" />
                 </div>
                 <div class="item-text">
                   <strong>{{ item.title }}</strong>
-                  <p>{{ item.content }}</p>
+                  <p>{{ item.message }}</p>
                   <span>{{ item.time }}</span>
                 </div>
               </div>
@@ -128,18 +134,15 @@ import {
   ChevronDown,
   ChevronRight,
   Megaphone,
-  FileText,
-  BarChart3,
   MessageSquare,
   User,
   LogOut,
 } from "lucide-vue-next";
 
 import { useAuthStore } from "../../stores/auth.store";
-import { useStudentStore } from "../../stores/student.store";
-import { getBroadcasts } from "../../api/broadcast.api";
+import { useNotificationsStore } from "../../stores/notifications.store";
 
-const props = defineProps({
+defineProps({
   currentPage: {
     type: String,
     default: "Dashboard",
@@ -149,17 +152,17 @@ const props = defineProps({
 const router = useRouter();
 const auth = useAuthStore();
 
-const notifications = ref([]);
+const notificationsStore = useNotificationsStore();
+const notifications = computed(() => notificationsStore.items);
 const isOpen = ref(false);
 const isProfileOpen = ref(false);
 const profileDropdownRef = ref(null);
 const notifyDropdownRef = ref(null);
 
-const unreadCount = computed(() => {
-  return notifications.value.filter((n) => n.unread).length;
-});
+const unreadCount = computed(() => notificationsStore.unreadCount);
 
 const roleLabel = computed(() => {
+  if (auth.user?.role === "platform_admin") return "Platform Admin";
   return auth.user?.role || "User";
 });
 
@@ -169,6 +172,7 @@ const portalLabel = computed(() => {
   if (role === "admin") return "Admin Portal";
   if (role === "lecturer") return "Lecturer Portal";
   if (role === "student") return "Student Portal";
+  if (role === "platform_admin") return "Platform Console";
 
   return "Portal";
 });
@@ -190,7 +194,9 @@ function toggleNotifications() {
 function handleViewProfile() {
   isProfileOpen.value = false;
   const role = auth.userRole;
-  if (role === "admin") {
+  if (role === "platform_admin") {
+    router.push("/platform-admin/institutions");
+  } else if (role === "admin") {
     router.push("/admin/settings");
   } else if (role === "lecturer") {
     router.push("/lecturer/settings");
@@ -214,39 +220,16 @@ function handleDocumentClick(event) {
   }
 }
 
-async function loadNotifications() {
-  try {
-    const list = [];
-
-    // 1. Fetch backend announcements (broadcasts)
-    if (import.meta.env.VITE_API_URL) {
-      const res = await getBroadcasts();
-      const broadcasts = res.data.broadcasts || [];
-      broadcasts.forEach((b) => {
-        list.push({
-          id: b._id,
-          title: b.title,
-          content: b.content,
-          type: "announcement",
-          unread: true,
-          time: new Date(b.createdAt).toLocaleDateString(),
-        });
-      });
-    }
-
-    notifications.value = list;
-  } catch (err) {
-    console.error("Failed to load navbar notifications:", err);
-  }
+function loadNotifications() {
+  return notificationsStore.fetch();
 }
 
-function markAsRead(item) {
-  item.unread = false;
-  if (auth.userRole === "student") {
-    const studentStore = useStudentStore();
-    if (typeof item.id === "string" && item.id.startsWith("not-")) {
-      studentStore.markNotificationRead(item.id);
-    }
+// Mark as read on the server, then go to the discussion it is about.
+function openNotification(item) {
+  notificationsStore.markRead(item.id);
+  if (item.link) {
+    isOpen.value = false;
+    router.push(item.link);
   }
 }
 
@@ -281,6 +264,16 @@ watch(
 </script>
 
 <style scoped>
+.mark-all-btn {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #0875f5;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .navbar {
   position: sticky;
   top: 0;
@@ -581,6 +574,7 @@ watch(
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
 }
 
 .dropdown-header h3 {

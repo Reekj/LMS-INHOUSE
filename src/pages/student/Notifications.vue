@@ -1,8 +1,19 @@
 <template>
   <section class="notifications-page">
-    <div class="page-heading">
-      <h1>Notifications</h1>
-      <p>Stay updated on your coursework, grades and announcements.</p>
+    <div class="page-heading heading-row">
+      <div>
+        <h1>Notifications</h1>
+        <p>Discussions, replies and announcements from your courses.</p>
+      </div>
+
+      <button
+        v-if="notificationsStore.unreadCount > 0"
+        type="button"
+        class="mark-all-btn"
+        @click="notificationsStore.markAllRead()"
+      >
+        Mark all as read
+      </button>
     </div>
 
     <div class="filter-row">
@@ -14,6 +25,9 @@
         @click="activeFilter = filter"
       >
         {{ filter }}
+        <template v-if="filter === 'Unread' && notificationsStore.unreadCount">
+          ({{ notificationsStore.unreadCount }})
+        </template>
       </button>
     </div>
 
@@ -22,40 +36,45 @@
         v-for="notification in visibleNotifications"
         :key="notification.id"
         class="notification-row"
-        :class="{ unread: notification.unread, red: notification.accent === 'red' }"
+        :class="{ unread: notification.unread, red: notification.unread, clickable: notification.link }"
+        @click="openNotification(notification)"
       >
-        <div class="notification-icon" :class="notification.type">
-          <FileText
-            v-if="notification.type === 'assignment' || notification.type === 'material'"
+        <div class="notification-icon" :class="notification.type === 'reply' ? 'discussion' : notification.type">
+          <MessageSquare
+            v-if="notification.type === 'discussion' || notification.type === 'reply'"
             :size="17"
           />
-          <BarChart3 v-else-if="notification.type === 'grade'" :size="17" />
-          <MessageSquare v-else-if="notification.type === 'discussion'" :size="17" />
           <Megaphone v-else :size="17" />
         </div>
 
         <div class="notification-content">
-          <span>{{ notification.courseCode }} — {{ notification.courseTitle }}</span>
+          <span>
+            {{ notification.courseCode ? `${notification.courseCode} — ${notification.courseTitle}` : "Announcement" }}
+            · {{ notification.time }}
+          </span>
           <strong>{{ notification.title }}</strong>
-          <p>{{ notification.meta }}</p>
+          <p>{{ notification.message }}</p>
 
           <button
-            v-if="notification.actionLabel"
+            v-if="notification.unread"
             type="button"
-            @click="markRead(notification.id)"
+            @click.stop="notificationsStore.markRead(notification.id)"
           >
-            {{ notification.actionLabel }}
+            Mark as read
           </button>
         </div>
       </article>
 
-      <div v-if="visibleNotifications.length === 0" class="empty-state">
+      <div v-if="!notificationsStore.loaded" class="empty-state">
+        Loading notifications...
+      </div>
+      <div v-else-if="visibleNotifications.length === 0" class="empty-state">
         No notifications in this category.
       </div>
     </section>
 
-    <div class="load-more-row">
-      <button type="button" @click="loadMore">
+    <div v-if="filteredNotifications.length > visibleLimit" class="load-more-row">
+      <button type="button" @click="visibleLimit += 10">
         Load More Notifications
       </button>
     </div>
@@ -64,84 +83,34 @@
 
 <script setup>
 import { computed, ref, onMounted } from "vue";
-import {
-  BarChart3,
-  FileText,
-  Megaphone,
-  MessageSquare,
-} from "lucide-vue-next";
+import { useRouter } from "vue-router";
+import { Megaphone, MessageSquare } from "lucide-vue-next";
 
-import { useStudentStore } from "../../stores/student.store";
-import { getBroadcasts } from "../../api/broadcast.api";
+import { useNotificationsStore } from "../../stores/notifications.store";
 
-const studentStore = useStudentStore();
+const router = useRouter();
+const notificationsStore = useNotificationsStore();
 
-const filters = ["All", "Unread", "Assignments & Tests", "Grades", "Announcement"];
+const filters = ["All", "Unread", "Discussions", "Announcements"];
 const activeFilter = ref("All");
-const visibleLimit = ref(4);
-const broadcasts = ref([]);
+const visibleLimit = ref(10);
 
-onMounted(async () => {
-  if (import.meta.env.VITE_API_URL) {
-    try {
-      const res = await getBroadcasts();
-      if (res.data && res.data.broadcasts) {
-        broadcasts.value = res.data.broadcasts;
-      }
-    } catch (err) {
-      console.error("Failed to load broadcasts:", err);
-    }
-  }
-});
-
-const mappedBroadcasts = computed(() => {
-  return broadcasts.value.map(b => ({
-    id: b._id,
-    type: "announcement",
-    category: "Announcement",
-    courseCode: "SYSTEM",
-    courseTitle: "Administrative Announcement",
-    title: b.title,
-    meta: `${new Date(b.createdAt).toLocaleDateString()} at ${new Date(b.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${b.content}`,
-    popupMeta: `${new Date(b.createdAt).toLocaleDateString()}`,
-    actionLabel: "",
-    unread: true,
-    accent: "red"
-  }));
-});
-
-const combinedNotifications = computed(() => {
-  return mappedBroadcasts.value;
-});
+onMounted(() => notificationsStore.fetch());
 
 const filteredNotifications = computed(() => {
-  const allList = combinedNotifications.value;
-  if (activeFilter.value === "All") {
-    return allList;
-  }
-
-  if (activeFilter.value === "Unread") {
-    return allList.filter((item) => item.unread);
-  }
-
-  return allList.filter(
-    (item) => item.category === activeFilter.value
-  );
+  const items = notificationsStore.items;
+  if (activeFilter.value === "All") return items;
+  if (activeFilter.value === "Unread") return items.filter((item) => item.unread);
+  return items.filter((item) => item.category === activeFilter.value);
 });
 
 const visibleNotifications = computed(() =>
   filteredNotifications.value.slice(0, visibleLimit.value)
 );
 
-function markRead(notificationId) {
-  // If it is a local notification, mark it read in the store
-  if (typeof notificationId === "string" && notificationId.startsWith("not-")) {
-    studentStore.markNotificationRead(notificationId);
-  }
-}
-
-function loadMore() {
-  visibleLimit.value += 4;
+function openNotification(notification) {
+  notificationsStore.markRead(notification.id);
+  if (notification.link) router.push(notification.link);
 }
 </script>
 
@@ -311,5 +280,26 @@ function loadMore() {
   .notification-row {
     grid-template-columns: 1fr;
   }
+}
+
+.heading-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mark-all-btn {
+  padding: 8px 14px;
+  border: 1px solid #0875f5;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #0875f5;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.notification-row.clickable {
+  cursor: pointer;
 }
 </style>

@@ -376,83 +376,21 @@ async function handleEnroll(course) {
   if (isEnrolled(course.id, course.code)) return;
 
   enrollingId.value = course.id;
-
-  let backendEnrolledIds = null;
-  let backendCourseId = null;
-
   try {
-    const payload = {
-      courseId: course.id,
-      courseCode: course.code,
-      title: course.title,
-      department: course.department,
-      lecturer: course.lecturer,
-    };
-    const res = await enrollCourse(payload);
-    if (res.data?.enrolledCourses) {
-      backendEnrolledIds = res.data.enrolledCourses;
-    }
-    if (res.data?.course?._id) {
-      backendCourseId = res.data.course._id;
-    }
+    await enrollCourse({ courseId: course.id, courseCode: course.code });
   } catch (err) {
-    // The server answered and refused: don't fake a local enrollment.
-    // Only fall back to local enrollment when the backend is unreachable.
-    if (err.response) {
-      enrollingId.value = null;
-      alert(err.response.data?.error || "Enrollment failed. Please try again.");
-      return;
-    }
-    console.warn("Backend unreachable, enrolling locally:", err.message);
+    // Only the server can enroll a student; never fake it locally.
+    alert(
+      err.response?.data?.error ||
+        "Could not reach the server, so you were not enrolled. Please try again."
+    );
+    return;
   } finally {
     enrollingId.value = null;
   }
 
-  const effectiveId = backendCourseId || course.id;
-
-  const newCourse = {
-    id: effectiveId,
-    _id: effectiveId,
-    code: course.code,
-    title: course.title,
-    units: course.units || 3,
-    lecturer: course.lecturer || "Not Assigned",
-    department: course.department || "General",
-    theme: "blue",
-    materialsCount: 3,
-    videosCount: 2,
-    assignmentsCount: 1,
-    discussionsCount: 2,
-    fromDb: true,
-  };
-
-  // Add to student store and persist
-  studentStore.courses.push(newCourse);
-  studentStore.persist();
-
-  // Keep auth store enrolled courses in sync
-  if (authStore.user) {
-    if (backendEnrolledIds) {
-      authStore.user.enrolledCourses = backendEnrolledIds;
-    } else {
-      if (!Array.isArray(authStore.user.enrolledCourses)) {
-        authStore.user.enrolledCourses = [];
-      }
-      if (!authStore.user.enrolledCourses.includes(effectiveId)) {
-        authStore.user.enrolledCourses.push(effectiveId);
-      }
-    }
-
-    try {
-      const storedAuth = JSON.parse(localStorage.getItem("uniosun_lms_auth") || "{}");
-      if (storedAuth && storedAuth.user) {
-        storedAuth.user.enrolledCourses = authStore.user.enrolledCourses;
-        localStorage.setItem("uniosun_lms_auth", JSON.stringify(storedAuth));
-      }
-    } catch (e) {
-      console.warn("Could not sync auth storage", e);
-    }
-  }
+  // Reload courses, tests and timetable from the server.
+  await studentStore.fetchStudentDataFromDB();
 
   toastMessage.value = `Successfully enrolled in ${course.code}: ${course.title}!`;
   setTimeout(() => {

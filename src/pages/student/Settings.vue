@@ -27,7 +27,7 @@
                 </button>
               </div>
 
-              <p>JPG or PNG. Max size 2MB</p>
+              <p>JPG or PNG. Max size 200KB</p>
 
               <input
                 ref="photoInput"
@@ -308,8 +308,9 @@ async function handlePhotoUpload(event) {
     return;
   }
 
-  if (file.size > 2 * 1024 * 1024) {
-    profileError.value = "Photo must not be larger than 2MB.";
+  // Must match the server's limit for profile photos.
+  if (file.size > 200 * 1024) {
+    profileError.value = "Photo must be less than 200KB.";
     profileMessage.value = "";
     return;
   }

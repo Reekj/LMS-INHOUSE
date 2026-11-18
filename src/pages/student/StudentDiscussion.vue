@@ -149,9 +149,9 @@
           <label class="form-label">
             Post Type
             <select v-model="newPost.type" class="form-control">
-              <option>Question</option>
-              <option>Announcement</option>
-              <option>General</option>
+              <!-- Only lecturers and admins can post announcements. -->
+              <option value="Question">Question (notifies your lecturer)</option>
+              <option value="General">General (notifies your classmates)</option>
             </select>
           </label>
 

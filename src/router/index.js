@@ -53,11 +53,29 @@ const routes = [
 
   {
     path: "/platform-admin",
-    component: () => import("../pages/admin/PlatformInstitutions.vue"),
+    component: () => import("../layouts/DashboardLayout.vue"),
     meta: {
       requiresAuth: true,
       allowedRoles: ["platform_admin"],
     },
+    children: [
+      {
+        path: "",
+        redirect: "/platform-admin/institutions",
+      },
+      {
+        path: "institutions",
+        component: () => import("../pages/platform/InstitutionList.vue"),
+      },
+      {
+        path: "institutions/:id",
+        component: () => import("../pages/platform/InstitutionDetail.vue"),
+      },
+      {
+        path: "new-institution",
+        component: () => import("../pages/platform/CreateInstitution.vue"),
+      },
+    ],
   },
 
   {

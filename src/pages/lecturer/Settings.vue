@@ -27,7 +27,7 @@
                 </button>
               </div>
 
-              <p>JPG or PNG. Max size 2MB</p>
+              <p>JPG or PNG. Max size 200KB</p>
             </div>
 
             <input
