@@ -1,8 +1,17 @@
 <template>
-  <section v-if="test" class="take-test-page">
+  <section v-if="loading" class="not-found">
+    <h1>Loading test...</h1>
+  </section>
+
+  <section v-else-if="loadError" class="not-found">
+    <h1>{{ loadError }}</h1>
+    <RouterLink to="/student/test">Back to Tests</RouterLink>
+  </section>
+
+  <section v-else-if="test && currentQuestion" class="take-test-page">
     <section class="test-banner">
       <div>
-        <h2>{{ test.courseCode }} — Mid-Semester Test</h2>
+        <h2>{{ test.courseCode }} — {{ test.title }}</h2>
         <h1>{{ test.courseTitle }}</h1>
       </div>
 
@@ -90,14 +99,15 @@
           You have answered {{ answeredCount }} of {{ questions.length }} questions.
           Once submitted, you cannot edit your answers.
         </p>
+        <p v-if="submitError" class="submit-error">{{ submitError }}</p>
 
         <div class="modal-actions">
           <button type="button" class="cancel-btn" @click="confirmOpen = false">
             Cancel
           </button>
 
-          <button type="button" class="submit-btn" @click="confirmSubmit">
-            Submit Now
+          <button type="button" class="submit-btn" :disabled="submitting" @click="confirmSubmit">
+            {{ submitting ? "Submitting..." : "Submit Now" }}
           </button>
         </div>
       </section>
@@ -105,7 +115,7 @@
   </section>
 
   <section v-else class="not-found">
-    <h1>Test not found</h1>
+    <h1>This test has no questions yet.</h1>
     <RouterLink to="/student/test">Back to Tests</RouterLink>
   </section>
 </template>
@@ -124,9 +134,13 @@ const testId = computed(() => String(route.params.testId || ""));
 const test = computed(() => testsStore.getActiveTestById(testId.value));
 const questions = computed(() => testsStore.questions);
 
-const currentIndex = ref(7);
-const remainingSeconds = ref(8);
+const currentIndex = ref(0);
+const remainingSeconds = ref(0);
 const confirmOpen = ref(false);
+const loading = ref(true);
+const loadError = ref("");
+const submitting = ref(false);
+const submitError = ref("");
 let timer = null;
 
 const currentQuestion = computed(() => questions.value[currentIndex.value]);
@@ -149,8 +163,21 @@ const formattedTime = computed(() => {
     .join(":");
 });
 
-onMounted(() => {
-  seedDemoAnswers();
+onMounted(async () => {
+  const { error } = await testsStore.fetchTestQuestionsAction(testId.value);
+  loading.value = false;
+  if (error) {
+    loadError.value = error;
+    return;
+  }
+  if (!test.value || !questions.value.length) return;
+
+  // The test's duration, but never past the end of the session.
+  const durationSeconds = (test.value.duration || 60) * 60;
+  const untilClose = test.value.scheduledEnd
+    ? Math.floor((new Date(test.value.scheduledEnd).getTime() - Date.now()) / 1000)
+    : durationSeconds;
+  remainingSeconds.value = Math.max(0, Math.min(durationSeconds, untilClose));
 
   timer = window.setInterval(() => {
     if (remainingSeconds.value <= 0) {
@@ -166,24 +193,6 @@ onMounted(() => {
 onUnmounted(() => {
   if (timer) clearInterval(timer);
 });
-
-function seedDemoAnswers() {
-  const demoAnswers = {
-    q1: "B",
-    q2: "C",
-    q3: "A",
-    q4: "C",
-    q5: "B",
-    q6: "A",
-    q7: "B",
-  };
-
-  Object.entries(demoAnswers).forEach(([questionId, optionId]) => {
-    if (!answers.value[questionId]) {
-      testsStore.answerQuestion(testId.value, questionId, optionId);
-    }
-  });
-}
 
 function selectAnswer(optionId) {
   testsStore.answerQuestion(testId.value, currentQuestion.value.id, optionId);
@@ -216,11 +225,20 @@ function submitTest() {
   confirmOpen.value = true;
 }
 
-function confirmSubmit() {
-  const result = testsStore.submitTest(testId.value);
+async function confirmSubmit() {
+  if (submitting.value) return;
+  submitting.value = true;
+  submitError.value = "";
+
+  const result = await testsStore.submitTestAnswersAction(testId.value);
+  submitting.value = false;
 
   if (result.success) {
+    if (timer) clearInterval(timer);
     router.push(`/student/test/${testId.value}/result`);
+  } else {
+    submitError.value = result.message;
+    confirmOpen.value = true;
   }
 }
 </script>
@@ -228,6 +246,11 @@ function confirmSubmit() {
 <style scoped>
 .take-test-page {
   color: #0f172a;
+}
+
+.submit-error {
+  color: #dc2626;
+  font-weight: 700;
 }
 
 .test-banner {

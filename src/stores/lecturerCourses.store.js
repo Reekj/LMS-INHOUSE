@@ -25,46 +25,9 @@ const defaultState = {
     },
   ],
 
-  availableCourses: [
-    {
-      id: "csc-112",
-      code: "CSC 112",
-      title: "Introduction to Computer Science",
-      shortTitle: "Introduction to Co...",
-      units: 3,
-      students: 110,
-      toGrade: 5,
-      newPosts: 2,
-      theme: "purple",
-    },
-    {
-      id: "csc-321",
-      code: "CSC 321",
-      title: "Data Structures & Algorithms",
-      shortTitle: "Data Science...",
-      units: 3,
-      students: 68,
-      toGrade: 3,
-      newPosts: 5,
-      theme: "orange",
-    },
-    {
-      id: "csc-322",
-      code: "CSC 322",
-      title: "Database Management Systems",
-      shortTitle: "Database Systems...",
-      units: 3,
-      students: 84,
-      toGrade: 11,
-      newPosts: 1,
-      theme: "blue",
-    },
-  ],
+  availableCourses: [],
 
-  assignments: [
-    { lecturerId: "lec-001", courseId: "csc-112" },
-    { lecturerId: "lec-001", courseId: "csc-321" },
-  ],
+  assignments: [],
 };
 
 function clone(value) {
@@ -74,7 +37,16 @@ function clone(value) {
 function loadState() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : clone(defaultState);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed.availableCourses)) {
+        parsed.availableCourses = parsed.availableCourses.filter(
+          (c) => !["csc-112", "csc-321", "csc-322"].includes(c.id)
+        );
+      }
+      return parsed;
+    }
+    return clone(defaultState);
   } catch {
     return clone(defaultState);
   }
@@ -100,7 +72,7 @@ export const useLecturerCoursesStore = defineStore("lecturerCourses", {
         .map((item) => item.courseId);
 
       return state.availableCourses.filter((course) =>
-        assignedIds.includes(course.id)
+        assignedIds.includes(course.id) || assignedIds.includes(course._id)
       );
     },
   },
@@ -119,7 +91,17 @@ export const useLecturerCoursesStore = defineStore("lecturerCourses", {
     },
 
     getCourseById(courseId) {
-      return this.availableCourses.find((course) => course.id === courseId);
+      if (!courseId) return null;
+      const strId = String(courseId);
+      const clean = (s) => String(s || "").toUpperCase().replace(/[\s\-_]+/g, "");
+      const norm = clean(strId);
+      return this.availableCourses.find(
+        (course) =>
+          String(course.id) === strId ||
+          String(course._id) === strId ||
+          (course.code && clean(course.code) === norm) ||
+          (course.courseCode && clean(course.courseCode) === norm)
+      );
     },
 
     getUnassignedCourses() {
@@ -198,7 +180,9 @@ export const useLecturerCoursesStore = defineStore("lecturerCourses", {
 
           return {
             id: c._id,
+            _id: c._id,
             code: c.courseCode,
+            courseCode: c.courseCode,
             title: c.title,
             units: c.units || 3,
             students: sCount,

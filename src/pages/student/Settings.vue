@@ -27,7 +27,7 @@
                 </button>
               </div>
 
-              <p>JPG or PNG. Max size 2MB</p>
+              <p>JPG or PNG. Max size 200KB</p>
 
               <input
                 ref="photoInput"
@@ -42,17 +42,17 @@
           <form class="profile-form" @submit.prevent="updateProfile">
             <label>
               Department
-              <input v-model.trim="form.department" type="text" disabled />
+              <input v-model.trim="form.department" type="text" disabled readonly />
             </label>
 
             <label>
               Level
-              <input v-model.trim="form.level" type="text" disabled />
+              <input v-model.trim="form.level" type="text" disabled readonly />
             </label>
 
             <label>
               Matric No.
-              <input v-model.trim="form.matricNo" type="text" disabled />
+              <input v-model.trim="form.matricNo" type="text" disabled readonly />
             </label>
 
             <label>
@@ -142,8 +142,13 @@
 
 <script setup>
 import { reactive, ref, watch } from "vue";
+import { useAuthStore } from "../../stores/auth.store";
+import { useStudentStore } from "../../stores/student.store";
+import { changePassword as apiChangePassword, uploadPhoto as uploadPhotoApi, removePhoto as removePhotoApi } from "../../api/auth.api";
+import { updateUser } from "../../api/user.api";
 
-const STORAGE_KEY = "uniosun_lms_student_settings_v1";
+const authStore = useAuthStore();
+const studentStore = useStudentStore();
 
 const photoInput = ref(null);
 const profilePhoto = ref("");
@@ -153,14 +158,14 @@ const passwordMessage = ref("");
 const passwordError = ref("");
 
 const form = reactive({
-  initials: "TA",
-  department: "Computer Science",
-  level: "300",
-  matricNo: "CSC/2020/0042",
-  firstName: "Adeyinka",
-  lastName: "Oladapo",
-  phone: "+234 803 456 7890",
-  email: "a.oladapo@uniosun.edu.ng",
+  initials: "",
+  department: "",
+  level: "",
+  matricNo: "",
+  firstName: "",
+  lastName: "",
+  phone: "",
+  email: "",
 });
 
 const password = reactive({
@@ -192,32 +197,57 @@ const notifications = reactive([
   },
 ]);
 
-loadSettings();
+const getUserStorageKey = () => {
+  const uid = authStore.user?.id || authStore.user?._id || authStore.user?.email || "guest";
+  return `uniosun_lms_student_settings_${uid}`;
+};
 
-watch(
-  notifications,
-  () => {
-    persistSettings();
-  },
-  { deep: true }
-);
+function populateFromUser() {
+  const user = authStore.user;
+  if (!user) return;
 
-function sanitizeText(value) {
-  return String(value || "").replace(/[<>]/g, "").trim();
+  const fullName = user.name || "";
+  const nameParts = fullName.trim().split(/\s+/).filter(Boolean);
+  const firstName = user.firstName || nameParts[0] || "";
+  const lastName = user.lastName || (nameParts.length > 1 ? nameParts.slice(1).join(" ") : "");
+
+  // Form fields strictly bind to the currently logged in user
+  form.firstName = firstName;
+  form.lastName = lastName;
+  form.email = user.email || "";
+  form.matricNo = user.identifier || user.matricNo || "";
+  form.department = user.department || "Nursing";
+  form.level = user.level || "100L";
+  form.phone = user.phone || form.phone || "";
+  form.initials = authStore.userInitials || `${firstName[0] || ""}${lastName[0] || ""}`.toUpperCase() || "ST";
+
+  if (user.profileImage) {
+    profilePhoto.value = user.profileImage;
+  }
+
+  loadUserSettings();
 }
 
-function loadSettings() {
+function loadUserSettings() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+    // Clear obsolete global key that leaked another user's profile
+    localStorage.removeItem("uniosun_lms_student_settings_v1");
 
-    if (saved.profile) {
-      Object.assign(form, {
-        ...form,
-        ...saved.profile,
-      });
+    const key = getUserStorageKey();
+    const saved = JSON.parse(localStorage.getItem(key) || "{}");
+
+    // Clean up any legacy department from user settings storage
+    if (saved.department) {
+      delete saved.department;
+      localStorage.setItem(key, JSON.stringify(saved));
     }
 
-    if (saved.profilePhoto) {
+    // Only load saved phone if not provided by authStore
+    if (saved.phone && typeof saved.phone === "string" && !form.phone) {
+      form.phone = saved.phone.trim();
+    }
+
+    if (saved.profilePhoto && !profilePhoto.value) {
       profilePhoto.value = saved.profilePhoto;
     }
 
@@ -227,32 +257,46 @@ function loadSettings() {
         if (target) target.enabled = Boolean(savedItem.enabled);
       });
     }
-  } catch {
-    localStorage.removeItem(STORAGE_KEY);
+  } catch (e) {
+    console.error("Error loading student settings:", e);
   }
 }
 
+watch(
+  () => authStore.user,
+  () => {
+    populateFromUser();
+  },
+  { deep: true, immediate: true }
+);
+
+function sanitizeText(value) {
+  return String(value || "").replace(/[<>]/g, "").trim();
+}
+
+watch(
+  notifications,
+  () => {
+    persistSettings();
+  },
+  { deep: true }
+);
+
 function persistSettings() {
+  if (!authStore.user) return;
+
+  const key = getUserStorageKey();
   localStorage.setItem(
-    STORAGE_KEY,
+    key,
     JSON.stringify({
-      profile: {
-        initials: form.initials,
-        department: form.department,
-        level: form.level,
-        matricNo: form.matricNo,
-        firstName: form.firstName,
-        lastName: form.lastName,
-        phone: form.phone,
-        email: form.email,
-      },
+      phone: form.phone,
       profilePhoto: profilePhoto.value,
       notifications,
     })
   );
 }
 
-function handlePhotoUpload(event) {
+async function handlePhotoUpload(event) {
   const file = event.target.files?.[0];
   event.target.value = "";
 
@@ -264,32 +308,75 @@ function handlePhotoUpload(event) {
     return;
   }
 
-  if (file.size > 2 * 1024 * 1024) {
-    profileError.value = "Photo must not be larger than 2MB.";
+  // Must match the server's limit for profile photos.
+  if (file.size > 200 * 1024) {
+    profileError.value = "Photo must be less than 200KB.";
     profileMessage.value = "";
     return;
   }
 
-  const reader = new FileReader();
+  if (import.meta.env.VITE_API_URL && authStore.user) {
+    const formData = new FormData();
+    formData.append("image", file);
+    try {
+      const res = await uploadPhotoApi(authStore.user.id, formData);
+      if (res.data && res.data.profileImage) {
+        profilePhoto.value = res.data.profileImage;
+        authStore.user.profileImage = res.data.profileImage;
+        localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+        profileError.value = "";
+        profileMessage.value = "Profile photo updated successfully!";
+        persistSettings();
+      }
+    } catch (err) {
+      console.error("Failed to upload photo:", err);
+      profileError.value = err.response?.data?.error || err.message || "Failed to upload photo.";
+      profileMessage.value = "";
+    }
+  } else {
+    const reader = new FileReader();
+    reader.onload = () => {
+      profilePhoto.value = String(reader.result || "");
+      profileError.value = "";
+      profileMessage.value = "Profile photo updated locally (Offline mode).";
+      persistSettings();
+      if (authStore.user) {
+        authStore.user.profileImage = profilePhoto.value;
+        localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+      }
+    };
+    reader.readAsDataURL(file);
+  }
+}
 
-  reader.onload = () => {
-    profilePhoto.value = String(reader.result || "");
+async function removePhoto() {
+  if (import.meta.env.VITE_API_URL && authStore.user) {
+    try {
+      await removePhotoApi(authStore.user.id);
+      profilePhoto.value = "";
+      authStore.user.profileImage = "";
+      localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+      profileError.value = "";
+      profileMessage.value = "Profile photo removed successfully!";
+      persistSettings();
+    } catch (err) {
+      console.error("Failed to remove photo:", err);
+      profileError.value = err.response?.data?.error || err.message || "Failed to remove photo.";
+      profileMessage.value = "";
+    }
+  } else {
+    profilePhoto.value = "";
+    profileMessage.value = "Profile photo removed.";
     profileError.value = "";
-    profileMessage.value = "Profile photo updated.";
     persistSettings();
-  };
-
-  reader.readAsDataURL(file);
+    if (authStore.user) {
+      authStore.user.profileImage = "";
+      localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+    }
+  }
 }
 
-function removePhoto() {
-  profilePhoto.value = "";
-  profileMessage.value = "Profile photo removed.";
-  profileError.value = "";
-  persistSettings();
-}
-
-function updateProfile() {
+async function updateProfile() {
   profileError.value = "";
   profileMessage.value = "";
 
@@ -297,9 +384,10 @@ function updateProfile() {
   const lastName = sanitizeText(form.lastName);
   const phone = sanitizeText(form.phone);
   const email = sanitizeText(form.email);
+  const department = authStore.user?.department || form.department || "Nursing";
 
-  if (!firstName || !lastName || !phone || !email) {
-    profileError.value = "Please complete all editable profile fields.";
+  if (!firstName || !lastName || !email) {
+    profileError.value = "Please complete all required profile fields.";
     return;
   }
 
@@ -308,17 +396,58 @@ function updateProfile() {
     return;
   }
 
+  if (import.meta.env.VITE_API_URL && authStore.user) {
+    try {
+      const payload = {
+        name: `${firstName} ${lastName}`.trim(),
+        email: email,
+        phone: phone,
+        department: department,
+      };
+      const res = await updateUser(authStore.user.id, payload);
+      if (res.data && res.data.user) {
+        authStore.user.name = res.data.user.name;
+        authStore.user.email = res.data.user.email;
+        authStore.user.phone = res.data.user.phone || phone;
+        authStore.user.department = res.data.user.department || department;
+        localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+      }
+    } catch (err) {
+      console.error("Failed to update student profile:", err);
+      profileError.value = err.response?.data?.error || err.message || "Failed to update profile.";
+      return;
+    }
+  }
+
   form.firstName = firstName;
   form.lastName = lastName;
   form.phone = phone;
   form.email = email;
+  form.department = department;
   form.initials = `${firstName[0] || ""}${lastName[0] || ""}`.toUpperCase();
+
+  if (authStore.user) {
+    authStore.user.name = `${firstName} ${lastName}`.trim();
+    authStore.user.email = email;
+    authStore.user.phone = phone;
+    authStore.user.department = department;
+    localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+  }
+
+  if (studentStore.currentStudent) {
+    studentStore.currentStudent.department = department;
+    studentStore.currentStudent.name = `${firstName} ${lastName}`.trim();
+    studentStore.currentStudent.firstName = firstName;
+    studentStore.currentStudent.initials = form.initials;
+    studentStore.currentStudent.phone = phone;
+    studentStore.persist();
+  }
 
   profileMessage.value = "Profile updated successfully.";
   persistSettings();
 }
 
-function changePassword() {
+async function changePassword() {
   passwordError.value = "";
   passwordMessage.value = "";
 
@@ -337,10 +466,27 @@ function changePassword() {
     return;
   }
 
-  password.current = "";
-  password.new = "";
-  password.confirm = "";
-  passwordMessage.value = "Password changed successfully.";
+  if (import.meta.env.VITE_API_URL) {
+    try {
+      await apiChangePassword({
+        currentPassword: password.current,
+        newPassword: password.new,
+        confirmPassword: password.confirm,
+      });
+      passwordMessage.value = "Password changed successfully.";
+      password.current = "";
+      password.new = "";
+      password.confirm = "";
+    } catch (err) {
+      console.error("Failed to change password:", err);
+      passwordError.value = err.response?.data?.error || err.message || "Failed to update password.";
+    }
+  } else {
+    password.current = "";
+    password.new = "";
+    password.confirm = "";
+    passwordMessage.value = "Password changed successfully (Mock).";
+  }
 }
 </script>
 
@@ -521,10 +667,14 @@ function changePassword() {
   outline: none;
 }
 
-.profile-form input:disabled {
-  background: #eef2f7;
+.profile-form input:disabled,
+.profile-form input:read-only:disabled {
+  background: #f1f5f9;
   color: #64748b;
+  border-color: #cbd5e1;
   cursor: not-allowed;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .form-actions {

@@ -274,9 +274,9 @@ import { getDashboardStats } from "../../api/stats.api";
 import { getAllUsers } from "../../api/user.api";
 import { getCourses } from "../../api/course.api";
 
-const studentCount = ref(3847);
-const lecturerCount = ref(142);
-const courseCount = ref(285);
+const studentCount = ref(0);
+const lecturerCount = ref(0);
+const courseCount = ref(0);
 
 const faculties = ref([
   {

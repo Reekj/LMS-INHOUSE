@@ -1,5 +1,6 @@
 import axios from "axios";
 import { getToken } from "../utils/token";
+import { clearStudentCaches } from "../utils/studentCache";
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
@@ -30,6 +31,9 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       // token expired or invalid
       localStorage.removeItem("lms_token");
+      localStorage.removeItem("uniosun_lms_auth");
+      localStorage.removeItem("uniosun_lms_lecturer_workspace_v1");
+      clearStudentCaches();
       window.location.href = "/login";
     }
 

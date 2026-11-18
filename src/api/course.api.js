@@ -4,6 +4,16 @@ export const getCourses = () => {
   return api.get("/courses");
 };
 
+// Only the courses the signed-in student is enrolled in.
+export const getMyCourses = () => {
+  return api.get("/courses/mine");
+};
+
+export const enrollCourse = (payload) => {
+  const body = typeof payload === "object" ? payload : { courseId: payload };
+  return api.post("/courses/enroll", body);
+};
+
 export const createCourse = (payload) => {
   return api.post("/courses/create-course", payload);
 };
@@ -22,4 +32,9 @@ export const uploadMaterial = (courseCode, formData) => {
 
 export const getMaterialDownloadUrl = (key, download = false) => {
   return api.get(`/courses/material/download?key=${encodeURIComponent(key)}${download ? "&download=true" : ""}`);
+};
+
+export const getCourseGrades = (courseId, studentId = null) => {
+  const url = `/courses/${courseId}/grades${studentId ? `?studentId=${studentId}` : ""}`;
+  return api.get(url);
 };

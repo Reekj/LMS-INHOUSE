@@ -1,354 +1,95 @@
 import { defineStore } from "pinia";
+import { getCourseTests, getStudentQuestions, submitTest, getTestResults } from "../api/test.api";
+import { getMyCourses } from "../api/course.api";
+import { useAuthStore } from "./auth.store";
 
-const STORAGE_KEY = "uniosun_lms_student_tests_v1";
+// v2: v1 held demo tests and results. Only in-progress answers are cached,
+// and only for the account that wrote them; everything else comes from the server.
+const STORAGE_KEY = "uniosun_lms_student_tests_v2";
+const OPTION_LETTERS = ["A", "B", "C", "D", "E", "F"];
 
-const defaultState = {
-  activeTests: [
-    {
-      id: "test-001",
-      title: "Mid-Semester Online Test",
-      courseCode: "CSC 322",
-      courseTitle: "Database Management Systems",
-      date: "Today, 12:00 PM",
-      duration: 90,
-      totalMarks: 20,
-      totalQuestions: 20,
-      status: "Available Now",
-      tag: "Active",
-      submitted: false,
-    },
-  ],
+function currentUserId() {
+  try {
+    const auth = useAuthStore();
+    return String(auth.user?.id || auth.user?._id || "");
+  } catch {
+    return "";
+  }
+}
 
-  upcomingTests: [
-    {
-      id: "test-002",
-      title: "Mid-Semester Online Test",
-      courseCode: "CSC 312",
-      courseTitle: "Data Structures & Algorithms",
-      date: "Apr 15, 12:00 PM",
-      duration: 60,
-      totalMarks: 20,
-      totalQuestions: 20,
-      status: "Starts in 18 days",
-      tag: "Upcoming",
-    },
-    {
-      id: "test-003",
-      title: "2nd Mid-Semester Online Test",
-      courseCode: "CSC 322",
-      courseTitle: "Database Management Systems",
-      date: "May 15, 12:00 PM",
-      duration: 30,
-      totalMarks: 20,
-      totalQuestions: 20,
-      status: "Starts in 6 days",
-      tag: "Upcoming",
-    },
-  ],
-
-  pastResults: [
-    {
-      id: "result-001",
-      testId: "past-001",
-      title: "Mid-Semester Online Test",
-      courseCode: "CSC 322",
-      courseTitle: "Database Management Systems",
-      submittedDate: "Mar 15, 2026",
-      duration: 60,
-      score: 17,
-      totalMarks: 20,
-      percentage: 85,
-      grade: "A",
-      status: "Graded",
-      testType: "Multiple Choice Questions",
-    },
-    {
-      id: "result-002",
-      testId: "past-002",
-      title: "Mid-Semester Online Test",
-      courseCode: "CSC 322",
-      courseTitle: "Database Management Systems",
-      submittedDate: "Mar 15, 2026",
-      duration: 60,
-      score: 18,
-      totalMarks: 20,
-      percentage: 90,
-      grade: "A",
-      status: "Auto Graded",
-      testType: "Multiple Choice Questions",
-    },
-    {
-      id: "result-003",
-      testId: "past-003",
-      title: "Mid-Semester Online Test",
-      courseCode: "CSC 322",
-      courseTitle: "Database Management Systems",
-      submittedDate: "Mar 15, 2026",
-      duration: 60,
-      score: "",
-      totalMarks: 20,
-      percentage: "",
-      grade: "",
-      status: "Pending Review",
-      testType: "Multiple Choice Questions",
-    },
-  ],
-
-  answers: {},
-
-  submittedResults: {},
-
-  questions: [
-    {
-      id: "q1",
-      question:
-        "Which SQL command is used to retrieve data from a database table?",
-      options: [
-        { id: "A", text: "INSERT" },
-        { id: "B", text: "SELECT" },
-        { id: "C", text: "UPDATE" },
-        { id: "D", text: "DELETE" },
-      ],
-      correctAnswer: "B",
-    },
-    {
-      id: "q2",
-      question: "Which of the following is a DBMS?",
-      options: [
-        { id: "A", text: "Microsoft Word" },
-        { id: "B", text: "Google Chrome" },
-        { id: "C", text: "MySQL" },
-        { id: "D", text: "Adobe Photoshop" },
-      ],
-      correctAnswer: "C",
-    },
-    {
-      id: "q3",
-      question: "What does ACID stand for in database transactions?",
-      options: [
-        { id: "A", text: "Atomicity, Consistency, Isolation, Durability" },
-        { id: "B", text: "Access, Control, Input, Data" },
-        { id: "C", text: "Application, Cache, Index, Database" },
-        { id: "D", text: "Atomicity, Control, Index, Durability" },
-      ],
-      correctAnswer: "A",
-    },
-    {
-      id: "q4",
-      question: "Which key uniquely identifies a record in a table?",
-      options: [
-        { id: "A", text: "Foreign key" },
-        { id: "B", text: "Candidate key" },
-        { id: "C", text: "Primary key" },
-        { id: "D", text: "Composite key" },
-      ],
-      correctAnswer: "C",
-    },
-    {
-      id: "q5",
-      question: "Which SQL clause is used to filter records?",
-      options: [
-        { id: "A", text: "ORDER BY" },
-        { id: "B", text: "WHERE" },
-        { id: "C", text: "GROUP BY" },
-        { id: "D", text: "JOIN" },
-      ],
-      correctAnswer: "B",
-    },
-    {
-      id: "q6",
-      question: "Which normal form removes repeating groups?",
-      options: [
-        { id: "A", text: "1NF" },
-        { id: "B", text: "2NF" },
-        { id: "C", text: "3NF" },
-        { id: "D", text: "BCNF" },
-      ],
-      correctAnswer: "A",
-    },
-    {
-      id: "q7",
-      question: "A foreign key is used to:",
-      options: [
-        { id: "A", text: "Encrypt table records" },
-        { id: "B", text: "Create a relationship between tables" },
-        { id: "C", text: "Delete duplicate records" },
-        { id: "D", text: "Sort table columns" },
-      ],
-      correctAnswer: "B",
-    },
-    {
-      id: "q8",
-      question:
-        "Which of the following ACID properties ensures that once a transaction is committed, it remains committed even in the case of a system failure?",
-      options: [
-        { id: "A", text: "Atomicity — all operations complete or none do" },
-        { id: "B", text: "Consistency — database remains in a valid state" },
-        {
-          id: "C",
-          text: "Isolation — concurrent transactions don't interfere",
-        },
-        {
-          id: "D",
-          text: "Durability — committed data persists through failures",
-        },
-      ],
-      correctAnswer: "D",
-    },
-    {
-      id: "q9",
-      question:
-        "Which of the following ACID properties ensures that once a transaction is committed, it remains committed even in the case of a system failure?",
-      options: [
-        { id: "A", text: "Atomicity — all operations complete or none do" },
-        { id: "B", text: "Consistency — database remains in a valid state" },
-        {
-          id: "C",
-          text: "Isolation — concurrent transactions don't interfere",
-        },
-        {
-          id: "D",
-          text: "Durability — committed data persists through failures",
-        },
-      ],
-      correctAnswer: "C",
-      resultAnswer: "B",
-    },
-    {
-      id: "q10",
-      question: "Which SQL keyword is used to remove duplicates?",
-      options: [
-        { id: "A", text: "UNIQUE" },
-        { id: "B", text: "DISTINCT" },
-        { id: "C", text: "ONLY" },
-        { id: "D", text: "FILTER" },
-      ],
-      correctAnswer: "B",
-    },
-    {
-      id: "q11",
-      question: "Which SQL command modifies existing records?",
-      options: [
-        { id: "A", text: "UPDATE" },
-        { id: "B", text: "CREATE" },
-        { id: "C", text: "SELECT" },
-        { id: "D", text: "DROP" },
-      ],
-      correctAnswer: "A",
-    },
-    {
-      id: "q12",
-      question: "Which command removes a table structure completely?",
-      options: [
-        { id: "A", text: "DELETE" },
-        { id: "B", text: "REMOVE" },
-        { id: "C", text: "DROP" },
-        { id: "D", text: "CLEAR" },
-      ],
-      correctAnswer: "C",
-    },
-    {
-      id: "q13",
-      question: "What does SQL mean?",
-      options: [
-        { id: "A", text: "Structured Query Language" },
-        { id: "B", text: "Simple Query Logic" },
-        { id: "C", text: "System Query Library" },
-        { id: "D", text: "Structured Queue Language" },
-      ],
-      correctAnswer: "A",
-    },
-    {
-      id: "q14",
-      question: "Which database model stores data in tables?",
-      options: [
-        { id: "A", text: "Hierarchical model" },
-        { id: "B", text: "Network model" },
-        { id: "C", text: "Relational model" },
-        { id: "D", text: "Object model" },
-      ],
-      correctAnswer: "C",
-    },
-    {
-      id: "q15",
-      question: "Which operation combines rows from two or more tables?",
-      options: [
-        { id: "A", text: "JOIN" },
-        { id: "B", text: "SORT" },
-        { id: "C", text: "FILTER" },
-        { id: "D", text: "INDEX" },
-      ],
-      correctAnswer: "A",
-    },
-    {
-      id: "q16",
-      question: "A candidate key is:",
-      options: [
-        { id: "A", text: "A key that can uniquely identify records" },
-        { id: "B", text: "A duplicate field" },
-        { id: "C", text: "A rejected primary key" },
-        { id: "D", text: "A password field" },
-      ],
-      correctAnswer: "A",
-    },
-    {
-      id: "q17",
-      question: "Which constraint prevents null values?",
-      options: [
-        { id: "A", text: "DEFAULT" },
-        { id: "B", text: "CHECK" },
-        { id: "C", text: "NOT NULL" },
-        { id: "D", text: "FOREIGN KEY" },
-      ],
-      correctAnswer: "C",
-    },
-    {
-      id: "q18",
-      question: "Which SQL clause sorts result records?",
-      options: [
-        { id: "A", text: "ORDER BY" },
-        { id: "B", text: "WHERE" },
-        { id: "C", text: "HAVING" },
-        { id: "D", text: "GROUP BY" },
-      ],
-      correctAnswer: "A",
-    },
-    {
-      id: "q19",
-      question: "Which SQL function counts rows?",
-      options: [
-        { id: "A", text: "SUM()" },
-        { id: "B", text: "COUNT()" },
-        { id: "C", text: "TOTAL()" },
-        { id: "D", text: "NUMBER()" },
-      ],
-      correctAnswer: "B",
-    },
-    {
-      id: "q20",
-      question: "Which command creates a new table?",
-      options: [
-        { id: "A", text: "MAKE TABLE" },
-        { id: "B", text: "NEW TABLE" },
-        { id: "C", text: "CREATE TABLE" },
-        { id: "D", text: "ADD TABLE" },
-      ],
-      correctAnswer: "C",
-    },
-  ],
-};
-
-function clone(value) {
-  return JSON.parse(JSON.stringify(value));
+function emptyState() {
+  return {
+    ownerId: "",
+    activeTests: [],
+    upcomingTests: [],
+    pastResults: [],
+    answers: {},
+    results: {},
+    questions: [],
+    currentTest: null,
+  };
 }
 
 function loadState() {
+  const state = { ...emptyState(), ownerId: currentUserId() };
   try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? { ...clone(defaultState), ...JSON.parse(saved) } : clone(defaultState);
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+    if (saved && state.ownerId && saved.ownerId === state.ownerId) {
+      state.answers = saved.answers || {};
+    }
   } catch {
-    return clone(defaultState);
+    // Ignore a corrupt cache.
   }
+  return state;
+}
+
+// Nigerian university grading scale.
+export function gradeFor(percentage) {
+  if (percentage >= 70) return "A";
+  if (percentage >= 60) return "B";
+  if (percentage >= 50) return "C";
+  if (percentage >= 45) return "D";
+  if (percentage >= 40) return "E";
+  return "F";
+}
+
+function percentOf(score, total) {
+  return total > 0 ? Math.round((score / total) * 100) : 0;
+}
+
+function formatDate(value) {
+  if (!value) return "";
+  return new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+// Options arrive as an array of strings; letter them A, B, C... and drop blanks.
+function toOptions(options) {
+  const list = Array.isArray(options)
+    ? options
+    : OPTION_LETTERS.map((letter) => options?.[letter]);
+  return list
+    .map((text, index) => ({ id: OPTION_LETTERS[index], text: String(text ?? "").trim() }))
+    .filter((option) => option.id && option.text);
+}
+
+function testTypeLabel(type) {
+  if (type === "theory") return "Theory";
+  if (type === "mixed") return "Mixed";
+  return "Multiple Choice Questions";
+}
+
+function toTestCard(test) {
+  return {
+    id: test._id,
+    title: test.testTitle,
+    courseCode: test.courseCode,
+    courseTitle: test.courseTitle,
+    date: `${formatDate(test.date)}, ${test.startTime}`,
+    duration: test.duration || 0,
+    totalMarks: test.numberOfQuestions * test.marksPerQuestion,
+    totalQuestions: test.numberOfQuestions,
+    testType: testTypeLabel(test.testType),
+  };
 }
 
 export const useStudentTestsStore = defineStore("studentTests", {
@@ -356,95 +97,172 @@ export const useStudentTestsStore = defineStore("studentTests", {
 
   getters: {
     getActiveTestById: (state) => (testId) => {
-      return state.activeTests.find((test) => test.id === testId);
+      if (state.currentTest?.id === testId) return state.currentTest;
+      return state.activeTests.find((test) => test.id === testId) || null;
     },
 
-    getResultByTestId: (state) => (testId) => {
-      return (
-        state.submittedResults[testId] ||
-        state.pastResults.find((result) => result.testId === testId)
-      );
-    },
+    getResultByTestId: (state) => (testId) => state.results[testId] || null,
 
-    getAnswersByTest: (state) => (testId) => {
-      return state.answers[testId] || {};
-    },
+    getAnswersByTest: (state) => (testId) => state.answers[testId] || {},
 
-    answeredCount: (state) => (testId) => {
-      return Object.keys(state.answers[testId] || {}).length;
-    },
+    answeredCount: (state) => (testId) => Object.keys(state.answers[testId] || {}).length,
   },
 
   actions: {
     persist() {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          activeTests: this.activeTests,
-          upcomingTests: this.upcomingTests,
-          pastResults: this.pastResults,
-          answers: this.answers,
-          submittedResults: this.submittedResults,
-          questions: this.questions,
-        })
-      );
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ownerId: this.ownerId, answers: this.answers }));
+    },
+
+    // Start clean if a different account is now signed in.
+    ensureOwner() {
+      const ownerId = currentUserId();
+      if (this.ownerId !== ownerId) {
+        Object.assign(this, emptyState(), { ownerId });
+      }
     },
 
     answerQuestion(testId, questionId, optionId) {
       if (!this.answers[testId]) {
         this.answers[testId] = {};
       }
-
       this.answers[testId][questionId] = optionId;
       this.persist();
     },
 
-    submitTest(testId) {
-      const test = this.activeTests.find((item) => item.id === testId);
-      const answers = this.answers[testId] || {};
+    // Loads the tests of the student's enrolled courses, sorted into
+    // active (open now, not yet taken), upcoming, and past (taken or missed).
+    async fetchCourseTestsAction() {
+      this.ensureOwner();
+      const coursesRes = await getMyCourses();
+      const courses = coursesRes.data?.courses || [];
 
-      if (!test) {
-        return { success: false, message: "Test not found." };
-      }
+      const responses = await Promise.all(
+        courses.map((course) =>
+          getCourseTests(course._id).catch((err) => {
+            console.warn(`Failed to fetch tests for ${course.courseCode}:`, err);
+            return { data: { tests: [] } };
+          })
+        )
+      );
+      const allTests = responses.flatMap((res) => res.data?.tests || []);
 
-      const score = this.questions.reduce((total, question) => {
-        return answers[question.id] === question.correctAnswer ? total + 1 : total;
-      }, 0);
+      this.activeTests = allTests
+        .filter((test) => test.status === "active" && !test.submission)
+        .map((test) => ({ ...toTestCard(test), status: "Available Now" }));
 
-      const percentage = Math.round((score / this.questions.length) * 100);
-      const grade = percentage >= 70 ? "A" : percentage >= 60 ? "B" : percentage >= 50 ? "C" : "D";
+      this.upcomingTests = allTests
+        .filter((test) => test.status === "upcoming")
+        .map((test) => ({ ...toTestCard(test), status: "Scheduled" }));
 
-      const result = {
-        id: `result-${Date.now()}`,
-        testId,
-        title: test.title,
-        courseCode: test.courseCode,
-        courseTitle: test.courseTitle,
-        submittedDate: "Feb 10, 2026",
-        duration: 15,
-        score,
-        totalMarks: test.totalMarks,
-        percentage,
-        grade,
-        status: "Auto Graded",
-        testType: "Multiple Choice Questions",
-        answers,
-      };
-
-      this.submittedResults[testId] = result;
-      this.pastResults.unshift(result);
-      this.activeTests = this.activeTests.filter((item) => item.id !== testId);
-
-      this.persist();
-
-      return { success: true, result };
+      this.pastResults = allTests
+        .filter((test) => test.submission || test.status === "closed")
+        .map((test) => {
+          const card = toTestCard(test);
+          const submission = test.submission;
+          const total = submission?.totalPossibleScore ?? card.totalMarks;
+          const score = submission ? submission.score : 0;
+          const percentage = percentOf(score, total);
+          return {
+            ...card,
+            testId: test._id,
+            submitted: Boolean(submission),
+            submittedDate: submission ? formatDate(submission.submittedAt) : `Closed ${formatDate(test.date)}`,
+            score,
+            totalMarks: total,
+            percentage,
+            grade: gradeFor(percentage),
+            status: submission ? "Auto Graded" : "Missed",
+            sortKey: submission?.submittedAt || test.scheduledEnd || test.date,
+          };
+        })
+        .sort((a, b) => new Date(b.sortKey) - new Date(a.sortKey));
     },
 
-    resetDemo() {
-      localStorage.removeItem(STORAGE_KEY);
-      const fresh = clone(defaultState);
-      Object.assign(this, fresh);
-      this.persist();
+    // Loads a test's questions for taking it. Returns an error message on failure.
+    async fetchTestQuestionsAction(testId) {
+      this.ensureOwner();
+      this.questions = [];
+      this.currentTest = null;
+      try {
+        const res = await getStudentQuestions(testId);
+        const test = res.data.test;
+        this.currentTest = {
+          id: test._id,
+          title: test.testTitle,
+          courseCode: test.courseCode,
+          courseTitle: test.courseTitle,
+          duration: test.duration || 0,
+          totalQuestions: test.numberOfQuestions,
+          scheduledEnd: test.scheduledEnd,
+          testType: testTypeLabel(test.testType),
+        };
+        this.questions = res.data.questions.map((q, idx) => ({
+          id: q._id,
+          number: idx + 1,
+          question: q.questionText,
+          options: toOptions(q.options),
+        }));
+        return { error: "" };
+      } catch (err) {
+        return { error: err.response?.data?.error || "Could not load this test. Please try again." };
+      }
+    },
+
+    async submitTestAnswersAction(testId) {
+      try {
+        const answersObj = this.answers[testId] || {};
+        const answersArray = Object.keys(answersObj).map((questionId) => ({
+          questionId,
+          selectedAnswer: answersObj[questionId],
+        }));
+
+        await submitTest(testId, { answers: answersArray });
+
+        delete this.answers[testId];
+        this.activeTests = this.activeTests.filter((item) => item.id !== testId);
+        this.persist();
+        return { success: true };
+      } catch (err) {
+        return { success: false, message: err.response?.data?.error || "Submission failed. Please try again." };
+      }
+    },
+
+    // Loads the graded script: score plus every question with the student's
+    // answer and the correct one. Returns an error message on failure.
+    async fetchTestResultsAction(testId) {
+      this.ensureOwner();
+      try {
+        const res = await getTestResults(testId);
+        const d = res.data;
+        const percentage = percentOf(d.score, d.totalPossibleScore);
+        this.results[testId] = {
+          testId,
+          title: d.testTitle,
+          courseCode: d.courseCode,
+          courseTitle: d.courseTitle,
+          submittedDate: d.submittedAt ? formatDate(d.submittedAt) : "Not submitted",
+          duration: d.duration || 0,
+          score: d.score,
+          totalMarks: d.totalPossibleScore,
+          percentage,
+          grade: gradeFor(percentage),
+          missed: d.missed,
+          correctCount: d.correctCount ?? d.review.filter((r) => r.isCorrect).length,
+          answeredCount: d.answeredCount ?? d.review.filter((r) => r.selectedAnswer !== null).length,
+          testType: testTypeLabel(d.testType),
+          review: d.review.map((r) => ({
+            id: r.questionId,
+            question: r.questionText,
+            options: toOptions(r.options),
+            correctAnswer: r.correctAnswer,
+            selectedAnswer: r.selectedAnswer,
+            isCorrect: r.isCorrect,
+          })),
+        };
+        return { error: "" };
+      } catch (err) {
+        return { error: err.response?.data?.error || "Could not load this result. Please try again." };
+      }
     },
   },
 });

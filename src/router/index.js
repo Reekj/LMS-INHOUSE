@@ -52,6 +52,33 @@ const routes = [
   },
 
   {
+    path: "/platform-admin",
+    component: () => import("../layouts/DashboardLayout.vue"),
+    meta: {
+      requiresAuth: true,
+      allowedRoles: ["platform_admin"],
+    },
+    children: [
+      {
+        path: "",
+        redirect: "/platform-admin/institutions",
+      },
+      {
+        path: "institutions",
+        component: () => import("../pages/platform/InstitutionList.vue"),
+      },
+      {
+        path: "institutions/:id",
+        component: () => import("../pages/platform/InstitutionDetail.vue"),
+      },
+      {
+        path: "new-institution",
+        component: () => import("../pages/platform/CreateInstitution.vue"),
+      },
+    ],
+  },
+
+  {
     path: "/lecturer",
     component: () => import("../layouts/DashboardLayout.vue"),
     meta: {
@@ -109,6 +136,18 @@ const routes = [
       {
         path: "dashboard",
         component: () => import("../pages/student/Dashboard.vue"),
+      },
+      {
+        path: "courses",
+        component: () => import("../pages/student/Courses.vue"),
+      },
+      {
+        path: "my-courses",
+        component: () => import("../pages/student/Courses.vue"),
+      },
+      {
+        path: "catalogue",
+        component: () => import("../pages/student/Catalogue.vue"),
       },
       {
         path: "calendar",
@@ -193,6 +232,7 @@ router.beforeEach((to) => {
   const auth = useAuthStore();
 
   if (to.meta.guestOnly && auth.isAuthenticated) {
+    if (auth.userRole === "platform_admin") return "/platform-admin";
     if (auth.userRole === "admin") return "/admin/dashboard";
     if (auth.userRole === "lecturer") return "/lecturer/dashboard";
     if (auth.userRole === "student") return "/student/dashboard";
@@ -206,6 +246,7 @@ router.beforeEach((to) => {
     to.meta.allowedRoles &&
     !to.meta.allowedRoles.includes(auth.userRole)
   ) {
+    if (auth.userRole === "platform_admin") return "/platform-admin";
     return "/login";
   }
 

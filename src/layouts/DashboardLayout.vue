@@ -3,14 +3,14 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-top">
-          <div class="logo-mark">
-            <span>UNIOSUN</span>
+          <div class="logo-container">
+            <img :src="nextItLogo" alt="LMS Logo" class="logo-img" />
+            <span class="brand-text">{{ brandName }}</span>
           </div>
 
           <span v-if="isAdmin" class="lms-pill">LMS</span>
+          <span v-else-if="isPlatformAdmin" class="lms-pill">PLATFORM</span>
         </div>
-
-        <p>Osun State University</p>
       </div>
 
       <nav class="menu" aria-label="Dashboard navigation">
@@ -36,6 +36,7 @@
             v-else
             :to="item.path"
             class="menu-link"
+            :class="{ active: item.matchNested && route.path.startsWith(`${item.path}/`) }"
             active-class="active"
           >
             <component :is="item.icon" :size="18" :stroke-width="1.8" />
@@ -56,7 +57,7 @@
         </div>
       </nav>
 
-      <div class="session-label">
+      <div v-if="!isPlatformAdmin" class="session-label">
         2025/2026 Session - Semester 2
       </div>
     </aside>
@@ -73,11 +74,13 @@
 
 <script setup>
 import { computed, reactive, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { ChevronDown } from "lucide-vue-next";
+import nextItLogo from "../assets/Next-it-logo.avif";
 
 import AppNavbar from "../components/common/AppNavbar.vue";
 import { adminMenu } from "../constants/adminMenu";
+import { platformMenu } from "../constants/platformMenu";
 import { buildLecturerMenu } from "../constants/lecturerMenu";
 import { buildStudentMenu } from "../constants/studentMenu";
 import { useAuthStore } from "../stores/auth.store";
@@ -85,6 +88,7 @@ import { useLecturerCoursesStore } from "../stores/lecturerCourses.store";
 import { useStudentStore } from "../stores/student.store";
 
 const route = useRoute();
+const router = useRouter();
 const auth = useAuthStore();
 const lecturerCoursesStore = useLecturerCoursesStore();
 const studentStore = useStudentStore();
@@ -92,6 +96,11 @@ const studentStore = useStudentStore();
 const openMenus = reactive({});
 
 const isAdmin = computed(() => auth.userRole === "admin");
+const isPlatformAdmin = computed(() => auth.userRole === "platform_admin");
+const brandName = computed(() => {
+  if (isPlatformAdmin.value) return "LMS Platform";
+  return auth.user?.institution?.name || "University LMS";
+});
 
 const menu = computed(() => {
   if (auth.userRole === "lecturer") {
@@ -100,6 +109,10 @@ const menu = computed(() => {
 
   if (auth.userRole === "student") {
     return buildStudentMenu(studentStore.courses);
+  }
+
+  if (auth.userRole === "platform_admin") {
+    return platformMenu;
   }
 
   return adminMenu;
@@ -133,12 +146,15 @@ watch(
 
 function toggleMenu(path) {
   openMenus[path] = !openMenus[path];
+  if (path && route.path !== path) {
+    router.push(path);
+  }
 }
 
 import { onMounted } from "vue";
 
 function isParentActive(item) {
-  return item.children?.some((child) => route.path.startsWith(child.path));
+  return route.path === item.path || item.children?.some((child) => route.path.startsWith(child.path));
 }
 
 onMounted(() => {
@@ -175,26 +191,32 @@ onMounted(() => {
 
 .brand-top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
 }
 
-.logo-mark {
+.logo-container {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.logo-img {
   width: 62px;
   height: 62px;
-  display: grid;
-  place-items: center;
-  border: 4px solid #d8e7db;
-  border-radius: 999px;
-  background:
-    radial-gradient(circle at center, #f8fafc 0 28%, transparent 29%),
-    conic-gradient(#16a34a, #f59e0b, #16a34a);
-  color: #0f5132;
-  font-size: 7px;
-  font-weight: 900;
+  object-fit: contain;
+}
+
+.brand-text {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e293b;
+  white-space: nowrap;
 }
 
 .lms-pill {
+  margin-top: 19px;
   height: 24px;
   padding: 0 8px;
   display: inline-flex;
@@ -207,7 +229,7 @@ onMounted(() => {
 }
 
 .brand p {
-  margin: 4px 0 0 72px;
+  margin: 4px 0 0 0;
   color: #26344d;
   font-size: 13px;
   font-weight: 500;
@@ -323,9 +345,18 @@ onMounted(() => {
     justify-content: center;
   }
 
-  .logo-mark {
+  .logo-container {
     width: 44px;
     height: 44px;
+  }
+
+  .logo-img {
+    width: 44px;
+    height: 44px;
+  }
+
+  .brand-text {
+    display: none;
   }
 
   .menu-link {

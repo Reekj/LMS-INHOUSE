@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { loginUser, logoutUser } from "../api/auth.api";
 import { setToken, clearToken } from "../utils/token";
+import { clearStudentCaches } from "../utils/studentCache";
 
 const STORAGE_KEY = "uniosun_lms_auth";
 
@@ -65,7 +66,8 @@ export const useAuthStore = defineStore("auth", {
         try {
           const res = await loginUser({
             loginKey: email,
-            password: password
+            password,
+            institutionCode: sanitizeText(payload.institutionCode).toLowerCase(),
           });
 
           const { token, user } = res.data;
@@ -79,15 +81,20 @@ export const useAuthStore = defineStore("auth", {
           localStorage.setItem(STORAGE_KEY, JSON.stringify({ user, token }));
           return user.role; // Return the role so the component can redirect
         } catch (err) {
-          // If it's a validation error or unauthorized role, throw it to the user
-          if (err.response && (err.response.status === 400 || err.response.status === 403 || err.response.status === 404)) {
-            throw new Error(err.response.data.error || "Invalid credentials.");
+          // With a backend configured, never fall back to the demo accounts:
+          // a failed login must look like a failed login.
+          if (err.response) {
+            const { status, data } = err.response;
+            if ([400, 403, 404].includes(status)) {
+              throw new Error(data?.error || "Invalid credentials.", { cause: err });
+            }
+            throw new Error(data?.error || "The server could not complete your sign-in. Please try again.", { cause: err });
           }
-          console.warn("Backend API login failed. Falling back to offline mock mode.", err);
+          throw new Error("Cannot reach the server. Check your connection and try again.", { cause: err });
         }
       }
 
-      // Offline Fallback / Mock Login Mode
+      // Offline demo mode: only when no backend is configured (VITE_API_URL unset).
       let role = "student";
       if (email.includes("admin") || email.includes("sola")) {
         role = "admin";
@@ -102,6 +109,9 @@ export const useAuthStore = defineStore("auth", {
           email: "sola@uniosun.edu.ng",
           role: "admin",
           label: "Admin",
+          identifier: "ADMIN/001",
+          department: "Administration",
+          phone: "+234 802 345 6789",
         },
         lecturer: {
           id: "lec-001",
@@ -109,6 +119,9 @@ export const useAuthStore = defineStore("auth", {
           email: "folake@uniosun.edu.ng",
           role: "lecturer",
           label: "Lecturer",
+          identifier: "STAFF/CSC/0042",
+          department: "Computer Science",
+          phone: "+234 803 456 7890",
         },
         student: {
           id: "stu-001",
@@ -116,13 +129,35 @@ export const useAuthStore = defineStore("auth", {
           email: "adebayo@student.uniosun.edu.ng",
           role: "student",
           label: "Student",
+          identifier: "NRS/2021/042",
+          department: "Nursing",
+          level: "300L",
+          phone: "+234 803 123 4567",
         },
       };
 
-      const selectedUser = roleProfiles[role];
-
-      if (!selectedUser) {
+      if (!roleProfiles[role]) {
         throw new Error("Invalid login role selected.");
+      }
+
+      const selectedUser = { ...roleProfiles[role] };
+      if (email && email.includes("@")) {
+        selectedUser.email = email;
+        const namePart = email.split("@")[0].replace(/[._-]/g, " ");
+        const capitalized = namePart
+          .split(" ")
+          .filter(Boolean)
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ");
+        if (
+          capitalized &&
+          !email.includes("student") &&
+          !email.includes("adebayo") &&
+          !email.includes("sola") &&
+          !email.includes("folake")
+        ) {
+          selectedUser.name = capitalized;
+        }
       }
 
       const dummyToken = `dummy_${role}_token_${Date.now()}`;
@@ -149,6 +184,17 @@ export const useAuthStore = defineStore("auth", {
       this.isAuthenticated = false;
       clearToken();
       localStorage.removeItem(STORAGE_KEY);
+      clearStudentCaches();
+
+      // Empty the in-memory student stores too (imported lazily: they import this store).
+      const [{ useStudentStore }, { useStudentTestsStore }, { useNotificationsStore }] = await Promise.all([
+        import("./student.store"),
+        import("./studentTests.store"),
+        import("./notifications.store"),
+      ]);
+      useStudentStore().$reset();
+      useStudentTestsStore().$reset();
+      useNotificationsStore().$reset();
 
       if (import.meta.env.VITE_API_URL && token && !token.startsWith("dummy_")) {
         try {

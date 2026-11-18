@@ -147,6 +147,14 @@
       </div>
     </section>
 
+    <section v-if="activeSection === 'discussion'">
+      <DiscussionBoard
+        :course="activeCourse"
+        :currentLecturer="currentLecturer"
+        :lecturerCourses="lecturerCourses"
+      />
+    </section>
+
     <section v-if="activeSection === 'videos'" class="videos-page">
       <div v-if="courseVideos.length" class="videos-layout">
         <main>
@@ -732,6 +740,7 @@ import {
 } from "lucide-vue-next";
 
 import AssignmentGradingView from "../../pages/lecturer/AssignmentGradingView.vue";
+import DiscussionBoard from "../../pages/lecturer/DiscussionBoard.vue";
 import { useLecturerCoursesStore } from "../../stores/lecturerCourses.store";
 import { useLecturerMaterialsStore } from "../../stores/lecturerMaterials.store";
 import { useLecturerWorkspaceStore } from "../../stores/lecturerWorkspace.store";
@@ -846,15 +855,15 @@ const recentUploads = computed(() => {
 });
 
 const courseAssignments = computed(() =>
-  workspaceStore.getAssignmentsByCourse(activeCourse.value?.id)
+  workspaceStore.getAssignmentsByCourse(activeCourse.value?.id || activeCourse.value?._id || route.params.courseId)
 );
 
 const courseDiscussions = computed(() =>
-  workspaceStore.getDiscussionsByCourse(activeCourse.value?.id)
+  workspaceStore.getDiscussionsByCourse(activeCourse.value?.id || activeCourse.value?._id || route.params.courseId)
 );
 
 const courseGradeBook = computed(() =>
-  workspaceStore.getGradeBookByCourse(activeCourse.value?.id)
+  workspaceStore.getGradeBookByCourse(activeCourse.value?.id || activeCourse.value?._id || route.params.courseId)
 );
 
 const selectedGradeAssignment = computed(() => {
@@ -976,7 +985,7 @@ const durationLabel = computed(() => formatSeconds(videoDuration.value));
 const currentTimeLabel = computed(() => formatSeconds(videoCurrentTime.value));
 
 watch(
-  () => activeCourse.value?.id,
+  () => activeCourse.value?.id || activeCourse.value?._id || route.params.courseId,
   (courseId) => {
     form.courseId = courseId || "";
     previewMaterial.value = null;
@@ -984,6 +993,9 @@ watch(
     selectedTypes.value = [...materialTypes];
     selectedVideo.value = courseVideos.value[0] || null;
     resetVideoState();
+    if (courseId) {
+      workspaceStore.fetchAssignments(courseId);
+    }
   },
   { immediate: true }
 );
@@ -1051,7 +1063,7 @@ function validateAssignmentForm() {
   return "";
 }
 
-function saveAssignment() {
+async function saveAssignment() {
   const error = validateAssignmentForm();
 
   if (error) {
@@ -1059,15 +1071,19 @@ function saveAssignment() {
     return;
   }
 
+  const courseId = activeCourse.value?.id || activeCourse.value?._id || route.params.courseId;
+  const courseCode = activeCourse.value?.code || activeCourse.value?.courseCode || "";
+
   const payload = {
-    courseId: activeCourse.value.id,
+    courseId,
+    courseCode,
     ...assignmentForm,
   };
 
   if (editingAssignmentId.value) {
-    workspaceStore.updateAssignment(editingAssignmentId.value, payload);
+    await workspaceStore.updateAssignment(editingAssignmentId.value, payload);
   } else {
-    workspaceStore.createAssignment(payload);
+    await workspaceStore.createAssignment(payload);
   }
 
   closeAssignmentModal();
@@ -1101,9 +1117,9 @@ function confirmDeleteAssignment(assignment) {
   deleteTarget.value = assignment;
 }
 
-function deleteAssignment() {
+async function deleteAssignment() {
   if (!deleteTarget.value) return;
-  workspaceStore.deleteAssignment(deleteTarget.value.id);
+  await workspaceStore.deleteAssignment(deleteTarget.value.id);
   deleteTarget.value = null;
 }
 

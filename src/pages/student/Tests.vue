@@ -23,7 +23,10 @@
       </button>
     </div>
 
-    <template v-if="activeTab === 'active'">
+    <p v-if="loadError" class="load-error">{{ loadError }}</p>
+    <div v-if="loading" class="empty-state">Loading your tests...</div>
+
+    <template v-else-if="activeTab === 'active'">
       <section class="tests-card">
         <h2>Active</h2>
 
@@ -85,6 +88,10 @@
             </button>
           </div>
         </article>
+
+        <div v-if="testsStore.upcomingTests.length === 0" class="empty-state">
+          No upcoming tests scheduled.
+        </div>
       </section>
     </template>
 
@@ -108,7 +115,7 @@
           <div class="tag-row">
             <span
               class="status-tag"
-              :class="{ pending: result.status === 'Pending Review' }"
+              :class="{ pending: !result.submitted }"
             >
               {{ result.status }}
             </span>
@@ -118,31 +125,17 @@
         </div>
 
         <div class="result-actions">
-          <strong v-if="result.score !== ''">
+          <strong>
             {{ result.score }}
             <small>/{{ result.totalMarks }}</small>
           </strong>
 
-          <strong v-else class="empty-score">
-            —
-            <small>/{{ result.totalMarks }}</small>
-          </strong>
-
-          <span v-if="result.percentage !== ''" class="grade-pill">
+          <span class="grade-pill">
             {{ result.percentage }}% — {{ result.grade }}
           </span>
 
-          <button
-            v-if="result.score !== ''"
-            type="button"
-            class="view-script"
-            @click="viewResult(result.testId)"
-          >
-            View Script
-          </button>
-
-          <button v-else type="button" class="awaiting-btn" disabled>
-            Awaiting Grade
+          <button type="button" class="view-script" @click="viewResult(result.testId)">
+            {{ result.submitted ? "View Script" : "View Answers" }}
           </button>
         </div>
       </article>
@@ -155,8 +148,8 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
-import { useRouter } from "vue-router";
+import { ref, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import {
   ArrowRight,
   CalendarDays,
@@ -167,9 +160,23 @@ import {
 import { useStudentTestsStore } from "../../stores/studentTests.store";
 
 const router = useRouter();
+const route = useRoute();
 const testsStore = useStudentTestsStore();
 
-const activeTab = ref("active");
+// ?tab=past opens Past Results (used after submitting a test).
+const activeTab = ref(route.query.tab === "past" ? "past" : "active");
+const loading = ref(true);
+const loadError = ref("");
+
+onMounted(async () => {
+  try {
+    await testsStore.fetchCourseTestsAction();
+  } catch (err) {
+    loadError.value = err.response?.data?.error || "Could not load your tests. Please refresh to try again.";
+  } finally {
+    loading.value = false;
+  }
+});
 
 function takeTest(testId) {
   router.push(`/student/test/${testId}/take`);
@@ -183,6 +190,13 @@ function viewResult(testId) {
 <style scoped>
 .tests-page {
   color: #0f172a;
+}
+
+.load-error {
+  margin: 0 0 16px;
+  color: #dc2626;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .page-heading {

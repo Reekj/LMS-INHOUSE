@@ -10,7 +10,7 @@
           <div class="assignment-top">
             <div>
               <h1>{{ assignment.title }}</h1>
-              <p>{{ assignment.courseCode }} · Due {{ assignment.due }}</p>
+              <p>{{ assignment.courseCode || course?.code || "" }} · Due {{ assignment.due }}</p>
             </div>
 
             <span class="status-pill" :class="statusClass">
@@ -216,7 +216,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { FileCheck2, UploadCloud } from "lucide-vue-next";
 
@@ -226,7 +226,19 @@ const route = useRoute();
 const router = useRouter();
 const studentStore = useStudentStore();
 
+const courseId = computed(() => String(route.params.courseId || ""));
+const assignmentId = computed(() => String(route.params.assignmentId || ""));
+
+const course = computed(() => studentStore.getCourseById(courseId.value));
+const assignment = computed(() =>
+  studentStore.getAssignmentById(assignmentId.value)
+);
+const group = computed(() =>
+  studentStore.getGroupForAssignment(assignmentId.value)
+);
+
 const fileInput = ref(null);
+const selectedFile = ref(null);
 const selectedFileName = ref("");
 const comments = ref("");
 const errorMessage = ref("");
@@ -235,15 +247,28 @@ const joinModalOpen = ref(false);
 const joinCode = ref("");
 const joinError = ref("");
 
-const courseId = computed(() => String(route.params.courseId || ""));
-const assignmentId = computed(() => String(route.params.assignmentId || ""));
+onMounted(async () => {
+  if (assignmentId.value) {
+    await studentStore.fetchAssignments(courseId.value);
+    
+    const currentAssign = studentStore.getAssignmentById(assignmentId.value);
+    if (currentAssign && currentAssign.type === "group") {
+      await studentStore.fetchMyGroup(assignmentId.value);
+    }
+  }
+});
 
-const assignment = computed(() =>
-  studentStore.getAssignmentById(assignmentId.value)
-);
-
-const group = computed(() =>
-  studentStore.getGroupForAssignment(assignmentId.value)
+watch(
+  assignmentId,
+  async (newId) => {
+    if (newId) {
+      await studentStore.fetchAssignments(courseId.value);
+      const currentAssign = studentStore.getAssignmentById(newId);
+      if (currentAssign && currentAssign.type === "group") {
+        await studentStore.fetchMyGroup(newId);
+      }
+    }
+  }
 );
 
 const previousSubmissions = computed(() =>
@@ -302,6 +327,7 @@ function acceptFile(file) {
     return;
   }
 
+  selectedFile.value = file;
   selectedFileName.value = file.name;
   errorMessage.value = "";
 }
@@ -324,18 +350,19 @@ function saveDraft() {
   successMessage.value = "Draft saved successfully.";
 }
 
-function submitAssignment() {
+async function submitAssignment() {
   if (!assignment.value) return;
 
-  if (!selectedFileName.value && !assignment.value.submittedFileName) {
+  if (!selectedFile.value && !assignment.value.submittedFileName) {
     errorMessage.value = "Please upload your assignment file.";
     successMessage.value = "";
     return;
   }
 
-  const result = studentStore.submitAssignment(assignment.value.id, {
+  const result = await studentStore.submitAssignment(assignment.value.id, {
     comments: comments.value,
     fileName: selectedFileName.value || assignment.value.submittedFileName,
+    file: selectedFile.value
   });
 
   if (!result.success) {
@@ -346,12 +373,13 @@ function submitAssignment() {
 
   errorMessage.value = "";
   successMessage.value = "Assignment submitted successfully.";
+  selectedFile.value = null;
 }
 
-function createGroup() {
+async function createGroup() {
   if (!assignment.value) return;
 
-  const result = studentStore.createGroup(assignment.value.id);
+  const result = await studentStore.createGroup(assignment.value.id);
 
   if (!result.success) {
     errorMessage.value = result.message;
@@ -368,10 +396,10 @@ function closeJoinModal() {
   joinError.value = "";
 }
 
-function joinGroup() {
+async function joinGroup() {
   if (!assignment.value) return;
 
-  const result = studentStore.joinGroup(assignment.value.id, joinCode.value);
+  const result = await studentStore.joinGroup(assignment.value.id, joinCode.value);
 
   if (!result.success) {
     joinError.value = result.message;

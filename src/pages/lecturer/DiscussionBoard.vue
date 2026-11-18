@@ -170,9 +170,9 @@
             <label class="form-label">
               Post Type
               <select v-model="postForm.type" class="form-select">
-                <option>Question</option>
-                <option>Announcement</option>
-                <option>General</option>
+                <option value="Question">Question (no notification)</option>
+                <option value="Announcement">Announcement (notifies everyone in the course)</option>
+                <option value="General">General (notifies the students)</option>
               </select>
             </label>
 
@@ -313,8 +313,10 @@ const availableGroups = computed(() => {
 
 watch(
   () => props.course.id,
-  (courseId) => {
-    workspaceStore.ensureDefaultDiscussions(courseId);
+  async (courseId) => {
+    if (courseId) {
+      await workspaceStore.fetchCourseForum(courseId);
+    }
     resetPostForm();
   },
   { immediate: true }
@@ -361,16 +363,13 @@ function closeNewPostModal() {
   resetPostForm();
 }
 
-function submitPost() {
-  const result = workspaceStore.createDiscussionPost({
+async function submitPost() {
+  const result = await workspaceStore.createDiscussionPost({
     courseId: props.course.id,
-    authorId: props.currentLecturer.id,
-    authorName: props.currentLecturer.name,
-    authorRole: "lecturer",
     type: postForm.type,
+    body: postForm.body,
     targetType: postForm.targetType,
     targetLabel: postForm.targetLabel,
-    body: postForm.body,
   });
 
   if (!result.success) {
@@ -381,12 +380,14 @@ function submitPost() {
   closeNewPostModal();
 }
 
-function submitQuickReply() {
-  const result = workspaceStore.createQuickReply({
+async function submitQuickReply() {
+  if (!quickReplyText.value) {
+    quickReplyError.value = "Post content is required.";
+    return;
+  }
+  const result = await workspaceStore.createDiscussionPost({
     courseId: props.course.id,
-    authorId: props.currentLecturer.id,
-    authorName: props.currentLecturer.name,
-    authorRole: "lecturer",
+    type: "Question",
     body: quickReplyText.value,
   });
 
@@ -409,28 +410,32 @@ function cancelReply() {
   replyText.value = "";
 }
 
-function submitReply(post) {
-  const result = workspaceStore.createDiscussionReply(post.id, {
-    authorId: props.currentLecturer.id,
-    authorName: props.currentLecturer.name,
-    authorRole: "lecturer",
-    body: replyText.value,
-  });
+async function submitReply(post) {
+  if (!replyText.value) {
+    return;
+  }
+  const result = await workspaceStore.addDiscussionReply(post.id, replyText.value);
 
   if (!result.success) {
-    quickReplyError.value = result.message;
+    alert(result.message || "Failed to submit reply.");
     return;
   }
 
   cancelReply();
+  await workspaceStore.fetchCourseForum(props.course.id);
 }
 
 function toggleLike(postId) {
   workspaceStore.toggleDiscussionLike(postId);
 }
 
-function deletePost(postId) {
-  workspaceStore.deleteDiscussionPost(postId);
+async function deletePost(postId) {
+  if (confirm("Are you sure you want to delete this post?")) {
+    const result = await workspaceStore.deleteDiscussionPost(postId);
+    if (!result.success) {
+      alert(result.message || "Failed to delete post.");
+    }
+  }
 }
 </script>
 

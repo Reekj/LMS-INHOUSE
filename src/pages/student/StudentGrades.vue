@@ -147,7 +147,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
 
 import { useStudentStore } from "../../stores/student.store";
@@ -158,6 +158,12 @@ const studentStore = useStudentStore();
 const filterStatus = ref("all");
 
 const courseId = computed(() => String(route.params.courseId || ""));
+
+onMounted(async () => {
+  if (courseId.value) {
+    await studentStore.fetchCourseGrades(courseId.value);
+  }
+});
 
 const grades = computed(() =>
   studentStore.getGradesByCourse(courseId.value)

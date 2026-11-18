@@ -1,4 +1,18 @@
 import { defineStore } from "pinia";
+import { useAuthStore } from "./auth.store";
+import { 
+  getCourseForumPosts, 
+  createForumPost, 
+  likeForumPost, 
+  addForumComment, 
+  deleteForumPost 
+} from "../api/forum.api";
+import {
+  createAssignment as createAssignmentApi,
+  getCourseAssignments,
+  updateAssignment as updateAssignmentApi,
+  deleteAssignment as deleteAssignmentApi,
+} from "../api/assignment.api";
 
 const STORAGE_KEY = "uniosun_lms_lecturer_workspace_v1";
 
@@ -299,7 +313,17 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
 
   getters: {
     getAssignmentsByCourse: (state) => (courseId) => {
-      return state.assignments.filter((item) => item.courseId === courseId);
+      const idStr = String(courseId || "");
+      const norm = idStr.toUpperCase().replace(/\s+/g, "");
+      return state.assignments.filter((item) => {
+        const itemCId = String(item.courseId || "");
+        const itemCCode = (item.courseCode || "").toUpperCase().replace(/\s+/g, "");
+        return (
+          itemCId === idStr ||
+          (norm && itemCId.toUpperCase().replace(/\s+/g, "") === norm) ||
+          (norm && itemCCode === norm)
+        );
+      });
     },
 
     getAssignmentById: (state) => (assignmentId) => {
@@ -307,13 +331,9 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
     },
 
     getDiscussionsByCourse: (state) => (courseId) => {
-      const courseDiscussions = state.discussions.filter(
+      return state.discussions.filter(
         (item) => item.courseId === courseId
       );
-
-      if (courseDiscussions.length) return courseDiscussions;
-
-      return buildDefaultDiscussions(courseId);
     },
 
     getGradeBookByCourse: (state) => (courseId) => {
@@ -341,21 +361,232 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
       );
     },
 
-    ensureDefaultDiscussions(courseId) {
-      const exists = this.discussions.some((item) => item.courseId === courseId);
+    async fetchCourseForum(courseId) {
+      try {
+        const res = await getCourseForumPosts(courseId);
+        if (res.data && res.data.success) {
+          // Clear existing discussions for this course first to avoid duplicates
+          this.discussions = this.discussions.filter(d => d.courseId !== courseId);
+          
+          const authStore = useAuthStore();
+          const currentUserId = authStore.user?.id;
 
-      if (!exists) {
-        this.discussions.unshift(...buildDefaultDiscussions(courseId));
-        this.persist();
+          const newDiscussions = res.data.posts.map(p => {
+            const initials = p.author?.name ? p.author.name.split(" ").filter(Boolean).map(n => n[0]).join("").toUpperCase().slice(0, 2) : "AN";
+            return {
+              id: p._id,
+              courseId: p.course,
+              type: p.postType.charAt(0).toUpperCase() + p.postType.slice(1),
+              body: p.content,
+              title: p.title,
+              authorName: p.author?.name || "Anonymous",
+              authorRole: p.author?.role || "student",
+              initials,
+              timeLabel: new Date(p.createdAt).toLocaleDateString(),
+              likes: p.likes?.length || 0,
+              likedByCurrentLecturer: p.likes?.includes(currentUserId) || false,
+              targetType: p.targetType || 'course',
+              targetLabel: p.targetLabel || 'Entire Course',
+              replies: p.comments ? p.comments.map(c => {
+                const commentInitials = c.author?.name ? c.author.name.split(" ").filter(Boolean).map(n => n[0]).join("").toUpperCase().slice(0, 2) : "AN";
+                return {
+                  id: c._id,
+                  authorName: c.author?.name || "Anonymous",
+                  authorRole: c.author?.role || "student",
+                  initials: commentInitials,
+                  body: c.content,
+                  timeLabel: new Date(c.createdAt).toLocaleDateString()
+                };
+              }) : []
+            };
+          });
+          
+          this.discussions.unshift(...newDiscussions);
+          this.persist();
+        }
+      } catch (err) {
+        console.error("Failed to fetch course forum:", err);
       }
     },
 
-    createAssignment(payload) {
+    async createDiscussionPost(payload) {
+      const body = sanitizeLongText(payload.body);
+      if (!body) return { success: false, message: "Post content is required." };
+      const title = payload.title || sanitizeText(payload.body).slice(0, 50);
+
+      try {
+        const res = await createForumPost({
+          courseId: payload.courseId,
+          title,
+          content: body,
+          postType: (payload.type || "general").toLowerCase(),
+          targetType: payload.targetType || 'course',
+          targetLabel: payload.targetLabel || 'Entire Course'
+        });
+
+        if (res.data && res.data.success) {
+          await this.fetchCourseForum(payload.courseId);
+          return { success: true };
+        }
+        throw new Error("Failed to save post to backend.");
+      } catch (err) {
+        // Report the failure: a post kept only in this browser reaches nobody.
+        return {
+          success: false,
+          message: err.response?.data?.error || "Your post could not be sent. Please try again.",
+        };
+      }
+    },
+
+    async toggleDiscussionLike(postId) {
+      try {
+        const res = await likeForumPost(postId);
+        if (res.data && res.data.success) {
+          const post = this.discussions.find(item => item.id === postId);
+          if (post) {
+            post.likedByCurrentLecturer = res.data.liked;
+            post.likes = res.data.likesCount;
+            this.persist();
+          }
+        }
+      } catch (err) {
+        console.error("Failed to toggle discussion like, falling back to local toggle:", err);
+        const post = this.discussions.find(item => item.id === postId);
+        if (post) {
+          post.likedByCurrentLecturer = !post.likedByCurrentLecturer;
+          post.likes = post.likedByCurrentLecturer ? post.likes + 1 : Math.max(0, post.likes - 1);
+          this.persist();
+        }
+      }
+    },
+
+    async addDiscussionReply(postId, content) {
+      if (!content) return { success: false, message: "Reply content is required." };
+      const cleaned = sanitizeLongText(content);
+
+      try {
+        const res = await addForumComment(postId, { content: cleaned });
+        if (res.data && res.data.success) {
+          const comment = res.data.comment;
+          const post = this.discussions.find(item => item.id === postId);
+          if (post) {
+            if (!post.replies) post.replies = [];
+            const commentInitials = comment.author?.name ? comment.author.name.split(" ").filter(Boolean).map(n => n[0]).join("").toUpperCase().slice(0, 2) : "AN";
+            
+            post.replies.push({
+              id: comment._id,
+              authorName: comment.author?.name || "Anonymous",
+              authorRole: comment.author?.role || "student",
+              initials: commentInitials,
+              body: comment.content,
+              timeLabel: "Now"
+            });
+            this.persist();
+          }
+          return { success: true };
+        }
+        throw new Error("Failed to save reply comment to backend.");
+      } catch (err) {
+        return {
+          success: false,
+          message: err.response?.data?.error || "Your reply could not be sent. Please try again.",
+        };
+      }
+    },
+
+    async deleteDiscussionPost(postId) {
+      try {
+        const res = await deleteForumPost(postId);
+        if (res.data && res.data.success) {
+          this.discussions = this.discussions.filter(item => item.id !== postId);
+          this.persist();
+          return { success: true };
+        }
+        throw new Error("Failed to delete post from backend.");
+      } catch (err) {
+        console.warn("deleteDiscussionPost API failed, falling back to local delete:", err);
+        this.discussions = this.discussions.filter(item => item.id !== postId);
+        this.persist();
+        return { success: true };
+      }
+    },
+
+    async fetchAssignments(courseId) {
+      if (!courseId) return;
+      try {
+        const res = await getCourseAssignments(courseId);
+        if (res.data && res.data.success && Array.isArray(res.data.assignments)) {
+          const fetched = res.data.assignments.map((a) => {
+            return {
+              id: a._id,
+              _id: a._id,
+              courseId: courseId,
+              title: a.title,
+              description: a.description,
+              type: a.isGroupAssignment || a.type === "grouped" ? "grouped" : "individual",
+              submissionType: a.submissionType || "File Upload",
+              totalMarks: a.totalMarks || 20,
+              dueDate: a.dueDate ? new Date(a.dueDate).toISOString().split("T")[0] : "",
+              dueTime: a.dueTime || "23:59",
+              groupMethod: a.groupMethod || "student_choose",
+              groupSize: a.groupSize || 4,
+              groups: [],
+              status: a.status || "Published",
+              createdAt: a.createdAt || new Date().toISOString(),
+            };
+          });
+
+          const otherCoursesAssignments = this.assignments.filter(
+            (item) => String(item.courseId) !== String(courseId)
+          );
+          const existingIds = new Set(fetched.map((f) => String(f.id)));
+          const preservedLocal = this.assignments.filter(
+            (item) => String(item.courseId) === String(courseId) && !existingIds.has(String(item.id))
+          );
+
+          this.assignments = [...fetched, ...preservedLocal, ...otherCoursesAssignments];
+          this.persist();
+        }
+      } catch (err) {
+        console.warn("Failed to fetch lecturer assignments from backend:", err);
+      }
+    },
+
+    async createAssignment(payload) {
       const courseId = sanitizeText(payload.courseId);
       const type = payload.type === "grouped" ? "grouped" : "individual";
       const groupMethod = sanitizeText(payload.groupMethod || "student_choose");
       const groupSize = Math.max(1, Number(payload.groupSize) || 1);
       const students = MOCK_STUDENTS_BY_COURSE[courseId] || [];
+
+      let backendAssignment = null;
+      try {
+        const apiPayload = {
+          course: courseId,
+          courseId,
+          title: sanitizeText(payload.title),
+          description: sanitizeText(payload.description),
+          dueDate: payload.dueDate
+            ? `${payload.dueDate}T${payload.dueTime || "23:59"}:00`
+            : new Date().toISOString(),
+          dueTime: payload.dueTime || "23:59",
+          type,
+          isGroupAssignment: type === "grouped",
+          groupMethod,
+          groupSize,
+          submissionType: sanitizeText(payload.submissionType || "File Upload"),
+          totalMarks: Number(payload.totalMarks) || 20,
+        };
+        const res = await createAssignmentApi(apiPayload);
+        if (res.data?.assignment) {
+          backendAssignment = res.data.assignment;
+        }
+      } catch (err) {
+        console.warn(
+          "Backend createAssignment API error, saving locally:",
+          err.response?.data?.error || err.message
+        );
+      }
 
       let groups = [];
 
@@ -377,9 +608,12 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
         ];
       }
 
+      const assignedId = backendAssignment?._id || `ass-${Date.now()}`;
       const assignment = {
-        id: `ass-${Date.now()}`,
+        id: assignedId,
+        _id: assignedId,
         courseId,
+        courseCode: payload.courseCode || courseId,
         title: sanitizeText(payload.title),
         description: sanitizeText(payload.description),
         type,
@@ -398,11 +632,51 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
       this.gradeBook.unshift(...buildMockSubmissions(assignment));
       this.persist();
 
+      // Sync directly to student storage in the browser
+      try {
+        const studentStoreKey = "uniosun_lms_student_v1";
+        const studentData = JSON.parse(localStorage.getItem(studentStoreKey) || "{}");
+        if (studentData && Array.isArray(studentData.assignments)) {
+          const mappedForStudent = {
+            id: assignedId,
+            _id: assignedId,
+            courseId: courseId,
+            courseCode: payload.courseCode || courseId,
+            title: assignment.title,
+            due: assignment.dueDate || "Not set",
+            maxScore: assignment.totalMarks,
+            score: "",
+            status: "Due today",
+            type: type === "grouped" ? "group" : "individual",
+            groupMode: groupMethod,
+            studentGroupStatus: "none",
+            groupId: "",
+            inviteCode: "",
+            isLeader: false,
+            instructions: assignment.description,
+            fileTypes: "PDF, DOCX",
+            maxSize: "10 MB",
+            comments: "",
+            submittedFileName: "",
+            feedback: "",
+          };
+          const alreadyExists = studentData.assignments.some(
+            (a) => String(a.id) === String(assignedId)
+          );
+          if (!alreadyExists) {
+            studentData.assignments.unshift(mappedForStudent);
+            localStorage.setItem(studentStoreKey, JSON.stringify(studentData));
+          }
+        }
+      } catch (e) {
+        console.warn("Could not sync assignment to student local storage:", e);
+      }
+
       return assignment;
     },
 
-    updateAssignment(assignmentId, payload) {
-      const index = this.assignments.findIndex((item) => item.id === assignmentId);
+    async updateAssignment(assignmentId, payload) {
+      const index = this.assignments.findIndex((item) => String(item.id) === String(assignmentId));
 
       if (index === -1) {
         return { success: false, message: "Assignment not found." };
@@ -413,6 +687,25 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
       const groupMethod = sanitizeText(payload.groupMethod || existing.groupMethod);
       const groupSize = Math.max(1, Number(payload.groupSize) || 1);
       const students = MOCK_STUDENTS_BY_COURSE[existing.courseId] || [];
+
+      try {
+        await updateAssignmentApi(assignmentId, {
+          title: sanitizeText(payload.title),
+          description: sanitizeText(payload.description),
+          dueDate: payload.dueDate
+            ? `${payload.dueDate}T${payload.dueTime || "23:59"}:00`
+            : undefined,
+          dueTime: payload.dueTime || "23:59",
+          type,
+          isGroupAssignment: type === "grouped",
+          groupMethod,
+          groupSize,
+          submissionType: sanitizeText(payload.submissionType || "File Upload"),
+          totalMarks: Number(payload.totalMarks) || 20,
+        });
+      } catch (err) {
+        console.warn("Backend updateAssignment failed, continuing local update:", err.message);
+      }
 
       let groups = existing.groups || [];
 
@@ -456,21 +749,59 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
       this.assignments.splice(index, 1, updated);
 
       this.gradeBook = this.gradeBook.filter(
-        (item) => item.assignmentId !== assignmentId
+        (item) => String(item.assignmentId) !== String(assignmentId)
       );
       this.gradeBook.unshift(...buildMockSubmissions(updated));
 
       this.persist();
 
+      try {
+        const studentStoreKey = "uniosun_lms_student_v1";
+        const studentData = JSON.parse(localStorage.getItem(studentStoreKey) || "{}");
+        if (studentData && Array.isArray(studentData.assignments)) {
+          const sIndex = studentData.assignments.findIndex((a) => String(a.id) === String(assignmentId));
+          if (sIndex !== -1) {
+            studentData.assignments[sIndex] = {
+              ...studentData.assignments[sIndex],
+              title: updated.title,
+              instructions: updated.description,
+              due: updated.dueDate || "Not set",
+              maxScore: updated.totalMarks,
+              type: type === "grouped" ? "group" : "individual",
+            };
+            localStorage.setItem(studentStoreKey, JSON.stringify(studentData));
+          }
+        }
+      } catch (e) {
+        console.warn("Could not sync assignment update to student local storage:", e);
+      }
+
       return { success: true, assignment: updated };
     },
 
-    deleteAssignment(assignmentId) {
-      this.assignments = this.assignments.filter((item) => item.id !== assignmentId);
+    async deleteAssignment(assignmentId) {
+      try {
+        await deleteAssignmentApi(assignmentId);
+      } catch (err) {
+        console.warn("Backend deleteAssignment failed, continuing local delete:", err.message);
+      }
+
+      this.assignments = this.assignments.filter((item) => String(item.id) !== String(assignmentId));
       this.gradeBook = this.gradeBook.filter(
-        (item) => item.assignmentId !== assignmentId
+        (item) => String(item.assignmentId) !== String(assignmentId)
       );
       this.persist();
+
+      try {
+        const studentStoreKey = "uniosun_lms_student_v1";
+        const studentData = JSON.parse(localStorage.getItem(studentStoreKey) || "{}");
+        if (studentData && Array.isArray(studentData.assignments)) {
+          studentData.assignments = studentData.assignments.filter((a) => String(a.id) !== String(assignmentId));
+          localStorage.setItem(studentStoreKey, JSON.stringify(studentData));
+        }
+      } catch (e) {
+        console.warn("Could not sync assignment deletion to student local storage:", e);
+      }
     },
 
     gradeSubmission(submissionId, payload) {
@@ -516,97 +847,6 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
       this.persist();
 
       return { success: true };
-    },
-
-    createDiscussionPost(payload) {
-      const body = sanitizeLongText(payload.body);
-
-      if (!body) {
-        return { success: false, message: "Post cannot be empty." };
-      }
-
-      const post = {
-        id: `disc-${Date.now()}`,
-        courseId: sanitizeText(payload.courseId),
-        authorId: sanitizeText(payload.authorId || "lec-001"),
-        authorName: sanitizeText(payload.authorName || "Lecturer"),
-        authorRole: sanitizeText(payload.authorRole || "lecturer"),
-        initials: getInitials(payload.authorName || "Lecturer"),
-        type: sanitizeText(payload.type || "Question"),
-        targetType: sanitizeText(payload.targetType || "course"),
-        targetLabel: sanitizeText(payload.targetLabel || "Entire Course"),
-        body,
-        likes: 0,
-        likedByCurrentLecturer: false,
-        createdAt: new Date().toISOString(),
-        timeLabel: "Now",
-        replies: [],
-      };
-
-      this.discussions.unshift(post);
-      this.persist();
-
-      return { success: true, post };
-    },
-
-    createDiscussionReply(postId, payload) {
-      const post = this.discussions.find((item) => item.id === postId);
-      const body = sanitizeLongText(payload.body);
-
-      if (!post) {
-        return { success: false, message: "Post not found." };
-      }
-
-      if (!body) {
-        return { success: false, message: "Reply cannot be empty." };
-      }
-
-      post.replies.push({
-        id: `reply-${Date.now()}`,
-        authorId: sanitizeText(payload.authorId || "lec-001"),
-        authorName: sanitizeText(payload.authorName || "Lecturer"),
-        authorRole: sanitizeText(payload.authorRole || "lecturer"),
-        initials: getInitials(payload.authorName || "Lecturer"),
-        body,
-        createdAt: new Date().toISOString(),
-        timeLabel: "Now",
-      });
-
-      this.persist();
-
-      return { success: true };
-    },
-
-    createQuickReply(payload) {
-      return this.createDiscussionPost({
-        ...payload,
-        type: "Question",
-        targetType: "course",
-        targetLabel: "Entire Course",
-      });
-    },
-
-    toggleDiscussionLike(postId) {
-      const post = this.discussions.find((item) => item.id === postId);
-
-      if (!post) {
-        return { success: false, message: "Post not found." };
-      }
-
-      post.likedByCurrentLecturer = !post.likedByCurrentLecturer;
-      post.likes = Math.max(
-        0,
-        Number(post.likes || 0) + (post.likedByCurrentLecturer ? 1 : -1)
-      );
-
-      this.persist();
-
-      return { success: true };
-    },
-
-    deleteDiscussionPost(postId) {
-      this.discussions = this.discussions.filter((item) => item.id !== postId);
-      this.persist();
     },
   },
 });

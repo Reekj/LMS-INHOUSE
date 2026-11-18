@@ -2,8 +2,28 @@
   <section class="test-page">
     <div class="page-heading">
       <div>
-        <h1>Create Online Test</h1>
+        <div class="heading-badge-wrap">
+          <h1>{{ activeTestId ? 'Manage Online Test' : 'Create Online Test' }}</h1>
+          <span v-if="activeTestId" class="badge-status badge-active">
+            ● Connected to Database
+          </span>
+          <span v-else class="badge-status badge-draft">
+            📝 Local Draft Mode (Auto-saved)
+          </span>
+        </div>
         <p>Set timed questions for your class · {{ selectedCourseCode }}</p>
+      </div>
+
+      <div class="test-mode-selector" v-if="courseTests.length > 0">
+        <label class="form-label select-test-label">
+          <span>Active / Scheduled Test</span>
+          <select v-model="selectedTestOption" @change="onSelectTestChange" class="form-select select-test-control">
+            <option value="new">+ Schedule a New Test (Draft)</option>
+            <option v-for="t in courseTests" :key="t._id" :value="t._id">
+              {{ t.testTitle }} ({{ t.status }})
+            </option>
+          </select>
+        </label>
       </div>
     </div>
 
@@ -15,7 +35,7 @@
           <div class="form-two">
             <label class="form-label">
               Course
-              <select v-model="testForm.courseId" class="form-select">
+              <select v-model="testForm.courseId" class="form-select" :disabled="isLoadingCourses">
                 <option v-for="course in courses" :key="course.id" :value="course.id">
                   {{ course.code }} - {{ course.title }}
                 </option>
@@ -93,9 +113,23 @@
 
         <section class="questions-card">
           <div class="questions-header">
-            <h2>Questions ({{ questions.length }} added)</h2>
-
             <div>
+              <h2>Questions ({{ questions.length }} added)</h2>
+              <span v-if="!activeTestId && questions.length > 0" class="draft-indicator-text">
+                ✓ Auto-saved locally
+              </span>
+            </div>
+
+            <div class="header-action-buttons">
+              <button
+                v-if="!activeTestId && questions.length > 0"
+                type="button"
+                class="discard-btn"
+                @click="discardDraft"
+                title="Discard unsaved local draft"
+              >
+                Clear Draft
+              </button>
               <button type="button" class="import-btn" @click="openImportModal">
                 ⇩ Import Questions
               </button>
@@ -135,12 +169,19 @@
             <button type="button" class="preview-btn" @click="openPreviewModal">
               Preview Test
             </button>
-            <button type="button" class="schedule-btn" @click="scheduleTest">
-              Schedule Test
+            <button
+              type="button"
+              class="schedule-btn"
+              :disabled="isScheduling"
+              @click="scheduleTest"
+            >
+              {{ isScheduling ? "Saving..." : (activeTestId ? "Update / Reschedule Test" : "Schedule Test") }}
             </button>
           </div>
 
-          <p v-if="statusMessage" class="status-message">{{ statusMessage }}</p>
+          <p v-if="statusMessage" :class="['status-message', { 'status-error': isStatusError }]">
+            {{ statusMessage }}
+          </p>
         </section>
       </main>
 
@@ -171,7 +212,20 @@
 
     <div v-if="questionModalOpen" class="modal-backdrop">
       <div class="question-modal">
-        <h2>{{ editingQuestionId ? "Edit Question" : "Add Question" }}</h2>
+        <div class="question-modal-header">
+          <h2>{{ editingQuestionId ? "Edit Question" : "Add Question" }}</h2>
+          <span :class="['modal-badge', activeTestId ? 'badge-active' : 'badge-draft']">
+            {{ activeTestId ? '● Database Mode' : '📝 Local Draft Mode' }}
+          </span>
+        </div>
+
+        <p class="modal-subtext">
+          {{
+            activeTestId
+              ? 'This question will be saved directly to the database test in MongoDB.'
+              : 'This question will be saved to your local draft and will be preserved even if you refresh the page. Click Schedule Test when ready to publish to students.'
+          }}
+        </p>
 
         <form @submit.prevent="saveQuestion">
           <div class="form-two">
@@ -237,7 +291,7 @@
               Cancel
             </button>
             <button type="submit" class="save-btn">
-              Save
+              {{ activeTestId ? "Save Question to Database" : "Save Question to Draft" }}
             </button>
           </div>
         </form>
@@ -360,70 +414,42 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref, watch } from "vue";
+import { computed, reactive, ref, onMounted, watch } from "vue";
+import { useRoute } from "vue-router";
+import { getCourses } from "../../api/course.api";
+import {
+  createTest,
+  updateTest,
+  addQuestion,
+  bulkUploadQuestions,
+  editQuestion,
+  deleteQuestion as deleteQuestionApi,
+  getLecturerQuestions,
+  getCourseTests
+} from "../../api/test.api";
+import { useLecturerCoursesStore } from "../../stores/lecturerCourses.store";
 
-const STORAGE_KEY = "uniosun_lms_lecturer_test_builder_v1";
+const route = useRoute();
+const lecturerCoursesStore = useLecturerCoursesStore();
 
-const courses = [
-  {
-    id: "csc-112",
-    code: "CSC 112",
-    title: "Introduction to Computer Science",
-  },
-  {
-    id: "csc-321",
-    code: "CSC 321",
-    title: "Data Structures & Algorithms",
-  },
-  {
-    id: "csc-322",
-    code: "CSC 322",
-    title: "Database Management Systems",
-  },
-];
+const STORAGE_KEYS = {
+  ACTIVE_TEST: "uniosun_lms_lecturer_active_test_id",
+  SELECTED_COURSE: "uniosun_lms_lecturer_selected_course_id",
+  TEST_DRAFT: "uniosun_lms_lecturer_test_draft",
+};
 
-const defaultQuestions = [
-  {
-    id: "q-1",
-    type: "Multiple Choice Question",
-    mark: 5,
-    text: "What does ACID stand for in DBMS?",
-    options: [
-      { key: "A", text: "Atomicity, Consistency, Isolation, Durability" },
-      { key: "B", text: "Accuracy, Control, Integration, Design" },
-      { key: "C", text: "Access, Consistency, Indexing, Data" },
-      { key: "D", text: "Atomicity, Control, Integrity, Dependency" },
-    ],
-    correctOption: "A",
-  },
-  {
-    id: "q-2",
-    type: "Multiple Choice Question",
-    mark: 5,
-    text:
-      "Which normal form requires all attributes to be fully functionally dependent on the primary key?",
-    options: [
-      { key: "A", text: "First Normal Form (1NF)" },
-      { key: "B", text: "Third Normal Form (3NF)" },
-      { key: "C", text: "Second Normal Form (2NF)" },
-      { key: "D", text: "Boyce-Codd Normal Form (BCNF)" },
-    ],
-    correctOption: "C",
-  },
-  {
-    id: "q-3",
-    type: "Theory Question",
-    mark: 5,
-    text: "Explain the difference between a superkey and a candidate key.",
-    options: [
-      { key: "A", text: "" },
-      { key: "B", text: "" },
-      { key: "C", text: "" },
-      { key: "D", text: "" },
-    ],
-    correctOption: "",
-  },
-];
+const courses = ref([]);
+const courseTests = ref([]);
+const activeTestId = ref("");
+const selectedTestOption = ref("new");
+const isRestoring = ref(false);
+
+const isLoadingCourses = ref(false);
+const isLoadingTests = ref(false);
+const isLoadingQuestions = ref(false);
+const isScheduling = ref(false);
+const statusMessage = ref("");
+const isStatusError = ref(false);
 
 const csvInput = ref(null);
 const questionModalOpen = ref(false);
@@ -434,15 +460,14 @@ const questionError = ref("");
 const importError = ref("");
 const importFileName = ref("");
 const importPreview = ref([]);
-const statusMessage = ref("");
 
 const testForm = reactive({
-  courseId: "csc-112",
+  courseId: "",
   testType: "Multiple Choice questions",
-  title: "CSC 112 Mid-Semester Test — April 2026",
-  dueDate: "2026-04-02",
+  title: "",
+  dueDate: localDateKey(new Date()),
   dueTime: "10:00",
-  duration: 90,
+  duration: 60,
   totalQuestions: 20,
   marksPerQuestion: 2,
   instructions: "",
@@ -461,13 +486,13 @@ const questionForm = reactive({
   correctOption: "A",
 });
 
-const questions = ref(loadState());
+const questions = ref([]);
 
 const selectedCourse = computed(() =>
-  courses.find((course) => course.id === testForm.courseId)
+  courses.value.find((course) => course.id === testForm.courseId)
 );
 
-const selectedCourseCode = computed(() => selectedCourse.value?.code || "CSC 112");
+const selectedCourseCode = computed(() => selectedCourse.value?.code || "Course");
 
 const totalMarks = computed(() =>
   questions.value.reduce((total, question) => total + Number(question.mark || 0), 0)
@@ -482,28 +507,430 @@ const readableDate = computed(() => {
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
+    year: "numeric"
   });
 });
 
+function saveDraftToStorage() {
+  if (activeTestId.value || isRestoring.value) return;
+  try {
+    const draft = {
+      courseId: testForm.courseId,
+      testType: testForm.testType,
+      title: testForm.title,
+      dueDate: testForm.dueDate,
+      dueTime: testForm.dueTime,
+      duration: testForm.duration,
+      totalQuestions: testForm.totalQuestions,
+      marksPerQuestion: testForm.marksPerQuestion,
+      instructions: testForm.instructions,
+      questions: questions.value,
+      savedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(STORAGE_KEYS.TEST_DRAFT, JSON.stringify(draft));
+  } catch (err) {
+    console.warn("Failed to save test draft to localStorage:", err);
+  }
+}
+
+function restoreDraftFromStorage() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEYS.TEST_DRAFT);
+    if (!saved) return false;
+    const draft = JSON.parse(saved);
+    if (!draft) return false;
+
+    if (draft.title) testForm.title = draft.title;
+    if (draft.testType) testForm.testType = draft.testType;
+    if (draft.dueDate) testForm.dueDate = draft.dueDate;
+    if (draft.dueTime) testForm.dueTime = draft.dueTime;
+    if (draft.duration) testForm.duration = draft.duration;
+    if (draft.totalQuestions) testForm.totalQuestions = draft.totalQuestions;
+    if (draft.marksPerQuestion) testForm.marksPerQuestion = draft.marksPerQuestion;
+    if (draft.instructions !== undefined) testForm.instructions = draft.instructions;
+
+    if (Array.isArray(draft.questions) && draft.questions.length > 0) {
+      questions.value = draft.questions;
+      return true;
+    }
+  } catch (err) {
+    console.warn("Failed to restore test draft from localStorage:", err);
+  }
+  return false;
+}
+
+function discardDraft() {
+  if (confirm("Are you sure you want to discard your unsaved draft questions and form data?")) {
+    switchToNewTest(true);
+    statusMessage.value = "Draft cleared.";
+    isStatusError.value = false;
+  }
+}
+
+onMounted(async () => {
+  await loadCourses();
+});
+
+async function loadCourses() {
+  isRestoring.value = true;
+  isLoadingCourses.value = true;
+  try {
+    const res = await getCourses();
+    const fetchedCourses = res.data.courses || [];
+    courses.value = fetchedCourses.map((c) => ({
+      id: c._id,
+      code: c.courseCode,
+      title: c.title,
+    }));
+  } catch (err) {
+    console.warn("Could not fetch courses from backend API, checking store:", err);
+    if (lecturerCoursesStore.availableCourses && lecturerCoursesStore.availableCourses.length > 0) {
+      courses.value = lecturerCoursesStore.availableCourses.map((c) => ({
+        id: c._id || c.id,
+        code: c.code || c.courseCode,
+        title: c.title,
+      }));
+    }
+  } finally {
+    isLoadingCourses.value = false;
+  }
+
+  if (courses.value.length === 0) {
+    isRestoring.value = false;
+    return;
+  }
+
+  // Restore saved course selection if available, else first course
+  const savedCourseId = route.query?.courseId || localStorage.getItem(STORAGE_KEYS.SELECTED_COURSE);
+  const matchedCourse = courses.value.find((c) => c.id === savedCourseId);
+  testForm.courseId = matchedCourse ? matchedCourse.id : courses.value[0].id;
+
+  // Fetch tests for this course
+  await fetchTestsForCourse(testForm.courseId);
+
+  // Restore active test if saved, otherwise check for staged draft
+  const savedTestId = route.query?.testId || localStorage.getItem(STORAGE_KEYS.ACTIVE_TEST);
+  let activeTestFound = null;
+
+  if (savedTestId) {
+    activeTestFound = courseTests.value.find((t) => t._id === savedTestId);
+  }
+
+  if (activeTestFound) {
+    await loadExistingTest(activeTestFound);
+  } else {
+    // In draft mode: restore staged draft questions and settings if available
+    switchToNewTest();
+  }
+
+  isRestoring.value = false;
+}
+
+async function fetchTestsForCourse(courseId) {
+  if (!courseId) return;
+  isLoadingTests.value = true;
+  try {
+    const res = await getCourseTests(courseId);
+    if (res.data && res.data.success) {
+      courseTests.value = res.data.tests || [];
+    } else {
+      courseTests.value = [];
+    }
+  } catch (err) {
+    console.warn("Failed to fetch course tests:", err);
+    courseTests.value = [];
+  } finally {
+    isLoadingTests.value = false;
+  }
+}
+
 watch(
-  questions,
+  () => testForm.courseId,
+  async (newCourseId, oldCourseId) => {
+    if (isRestoring.value) return;
+    if (newCourseId && newCourseId !== oldCourseId) {
+      localStorage.setItem(STORAGE_KEYS.SELECTED_COURSE, newCourseId);
+      await fetchTestsForCourse(newCourseId);
+      if (activeTestId.value) {
+        const testInCourse = courseTests.value.find((t) => t._id === activeTestId.value);
+        if (!testInCourse) {
+          switchToNewTest();
+        }
+      } else {
+        const course = courses.value.find((c) => c.id === newCourseId);
+        if (course) {
+          testForm.title = `${course.code} Online Test`;
+        }
+      }
+    }
+  }
+);
+
+watch(
+  [questions, () => ({ ...testForm })],
   () => {
-    persistState();
+    if (!isRestoring.value && !activeTestId.value) {
+      saveDraftToStorage();
+    }
   },
   { deep: true }
 );
 
-function loadState() {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : clone(defaultQuestions);
-  } catch {
-    return clone(defaultQuestions);
+function formatTimeAMPM(time24) {
+  if (!time24) return "10:00 AM";
+  const [hStr, mStr] = time24.split(":");
+  let hours = parseInt(hStr, 10);
+  const minutes = mStr || "00";
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12;
+  hours = hours ? hours : 12;
+  return `${String(hours).padStart(2, "0")}:${minutes} ${ampm}`;
+}
+
+function localDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function calculateEndTime(time24, durationMinutes = 60) {
+  if (!time24) return "11:00 AM";
+  const [hStr, mStr] = time24.split(":");
+  let totalMinutes =
+    parseInt(hStr, 10) * 60 +
+    parseInt(mStr || 0, 10) +
+    Number(durationMinutes || 60);
+  let hours = Math.floor(totalMinutes / 60) % 24;
+  let minutes = totalMinutes % 60;
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12;
+  hours = hours ? hours : 12;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")} ${ampm}`;
+}
+
+function convertAmPmTo24(timeStr) {
+  if (!timeStr) return "10:00";
+  const match = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (!match) return "10:00";
+  let hours = parseInt(match[1], 10);
+  const minutes = match[2];
+  const ampm = match[3] ? match[3].toUpperCase() : null;
+  if (ampm === "PM" && hours < 12) hours += 12;
+  if (ampm === "AM" && hours === 12) hours = 0;
+  return `${String(hours).padStart(2, "0")}:${minutes}`;
+}
+
+function durationFromTimes(startTime, endTime) {
+  const toMinutes = (time) => {
+    const converted = convertAmPmTo24(time);
+    const [hours, minutes] = converted.split(":").map(Number);
+    return hours * 60 + minutes;
+  };
+  const difference = toMinutes(endTime) - toMinutes(startTime);
+  return difference > 0 ? difference : 60;
+}
+
+async function onSelectTestChange() {
+  if (selectedTestOption.value === "new") {
+    switchToNewTest();
+  } else {
+    const found = courseTests.value.find((t) => t._id === selectedTestOption.value);
+    if (found) {
+      await loadExistingTest(found);
+    }
   }
 }
 
-function persistState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(questions.value));
+function switchToNewTest(forceClean = false) {
+  selectedTestOption.value = "new";
+  activeTestId.value = "";
+  localStorage.removeItem(STORAGE_KEYS.ACTIVE_TEST);
+
+  if (forceClean) {
+    localStorage.removeItem(STORAGE_KEYS.TEST_DRAFT);
+  }
+
+  const restored = !forceClean && restoreDraftFromStorage();
+
+  if (restored) {
+    statusMessage.value = `Restored draft test with ${questions.value.length} question(s) saved in this browser.`;
+    isStatusError.value = false;
+  } else {
+    const code = selectedCourseCode.value || "Course";
+    testForm.title = `${code} Online Test`;
+    testForm.testType = "Multiple Choice questions";
+    testForm.dueDate = localDateKey(new Date());
+    testForm.dueTime = "10:00";
+    testForm.duration = 60;
+    testForm.totalQuestions = 20;
+    testForm.marksPerQuestion = 2;
+    testForm.instructions = "";
+    questions.value = [];
+    statusMessage.value = "";
+    isStatusError.value = false;
+  }
+}
+
+async function loadExistingTest(test) {
+  selectedTestOption.value = test._id;
+  activeTestId.value = test._id;
+  localStorage.setItem(STORAGE_KEYS.ACTIVE_TEST, test._id);
+  localStorage.setItem(STORAGE_KEYS.SELECTED_COURSE, testForm.courseId);
+
+  testForm.title = test.testTitle;
+  testForm.testType = test.testType === "theory"
+    ? "Theory questions"
+    : test.testType === "mixed"
+      ? "Mixed questions"
+      : "Multiple Choice questions";
+  testForm.dueDate = test.date ? test.date.split("T")[0] : "";
+  testForm.dueTime = convertAmPmTo24(test.startTime);
+  testForm.duration = test.duration || durationFromTimes(test.startTime, test.endTime);
+  testForm.totalQuestions = test.numberOfQuestions || 20;
+  testForm.marksPerQuestion = test.marksPerQuestion || 2;
+  testForm.instructions = test.instructions || "";
+
+  await fetchTestQuestions(test._id);
+}
+
+async function fetchTestQuestions(testId) {
+  isLoadingQuestions.value = true;
+  try {
+    const res = await getLecturerQuestions(testId);
+    if (res.data && res.data.success) {
+      questions.value = (res.data.questions || []).map((q) => {
+        const opts = Array.isArray(q.options) ? q.options : [];
+        return {
+          id: q._id,
+          _id: q._id,
+          type:
+            opts.length > 0 ? "Multiple Choice Question" : "Theory Question",
+          mark: Number(testForm.marksPerQuestion) || 1,
+          text: q.questionText,
+          options: [
+            { key: "A", text: opts[0] || "" },
+            { key: "B", text: opts[1] || "" },
+            { key: "C", text: opts[2] || "" },
+            { key: "D", text: opts[3] || "" },
+          ],
+          correctOption: q.correctAnswer || "A",
+        };
+      });
+      statusMessage.value = `Loaded ${questions.value.length} questions from test database.`;
+      isStatusError.value = false;
+    }
+  } catch (err) {
+    statusMessage.value =
+      err.response?.data?.error || "Failed to load test questions.";
+    isStatusError.value = true;
+  } finally {
+    isLoadingQuestions.value = false;
+  }
+}
+
+async function scheduleTest() {
+  if (!testForm.title) {
+    statusMessage.value = "Add a test title before scheduling.";
+    isStatusError.value = true;
+    return;
+  }
+
+  if (!testForm.courseId) {
+    statusMessage.value = "Select a course before scheduling.";
+    isStatusError.value = true;
+    return;
+  }
+
+  if (!testForm.dueDate || !testForm.dueTime) {
+    statusMessage.value = "Set a due date and start time.";
+    isStatusError.value = true;
+    return;
+  }
+
+  if (!Number.isFinite(Number(testForm.duration)) || Number(testForm.duration) < 1) {
+    statusMessage.value = "Set a positive test duration.";
+    isStatusError.value = true;
+    return;
+  }
+
+  isScheduling.value = true;
+  statusMessage.value = "";
+  isStatusError.value = false;
+
+  try {
+    const payload = {
+      course: testForm.courseId,
+      testTitle: testForm.title,
+      testType: testForm.testType.toLowerCase().includes("mixed")
+        ? "mixed"
+        : testForm.testType.toLowerCase().includes("theory")
+          ? "theory"
+          : "multiple-choice",
+      date: testForm.dueDate,
+      startTime: formatTimeAMPM(testForm.dueTime),
+      endTime: calculateEndTime(testForm.dueTime, testForm.duration),
+      duration: Number(testForm.duration),
+      numberOfQuestions:
+        Number(testForm.totalQuestions) || questions.value.length || 1,
+      marksPerQuestion: Number(testForm.marksPerQuestion) || 1,
+      instructions: testForm.instructions || "",
+    };
+
+    if (activeTestId.value) {
+      // Update existing test
+      try {
+        await updateTest(activeTestId.value, payload);
+        await fetchTestsForCourse(testForm.courseId);
+        statusMessage.value = "Test updated successfully in database!";
+        isStatusError.value = false;
+      } catch (updateErr) {
+        statusMessage.value =
+          updateErr.response?.data?.error || updateErr.message || "Failed to update test.";
+        isStatusError.value = true;
+      }
+      return;
+    }
+
+    const res = await createTest(payload);
+    if (res.data && res.data.success) {
+      const createdTest = res.data.test;
+      activeTestId.value = createdTest._id;
+      selectedTestOption.value = createdTest._id;
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_TEST, createdTest._id);
+      localStorage.setItem(STORAGE_KEYS.SELECTED_COURSE, testForm.courseId);
+
+      // If questions were staged in the builder, bulk upload them to the created test
+      if (questions.value.length > 0) {
+        const formattedQuestions = questions.value.map((q) => ({
+          questionText: q.text,
+          options: q.options.map((o) => o.text).filter(Boolean),
+          correctAnswer:
+            q.type === "Multiple Choice Question"
+              ? q.correctOption || "A"
+              : "Theory Question",
+        }));
+
+        await bulkUploadQuestions(createdTest._id, {
+          questions: formattedQuestions,
+        });
+        await fetchTestQuestions(createdTest._id);
+      }
+
+      // Remove the local draft since it is now published to database
+      localStorage.removeItem(STORAGE_KEYS.TEST_DRAFT);
+
+      await fetchTestsForCourse(testForm.courseId);
+      statusMessage.value = "Test scheduled and saved to database successfully!";
+      isStatusError.value = false;
+    }
+  } catch (err) {
+    statusMessage.value =
+      err.response?.data?.error || err.message || "Failed to schedule test.";
+    isStatusError.value = true;
+  } finally {
+    isScheduling.value = false;
+  }
 }
 
 function clone(value) {
@@ -544,7 +971,7 @@ function closeQuestionModal() {
 function resetQuestionForm() {
   Object.assign(questionForm, {
     type: "Multiple Choice Question",
-    mark: 1,
+    mark: Number(testForm.marksPerQuestion) || 1,
     text: "",
     options: [
       { key: "A", text: "" },
@@ -576,14 +1003,14 @@ function validateQuestion() {
     );
 
     if (!correctOption || !sanitizeText(correctOption.text)) {
-      return "Select a valid correct answer.";
+      return "Select a valid correct answer option.";
     }
   }
 
   return "";
 }
 
-function saveQuestion() {
+async function saveQuestion() {
   const error = validateQuestion();
 
   if (error) {
@@ -591,27 +1018,90 @@ function saveQuestion() {
     return;
   }
 
-  const payload = {
-    id: editingQuestionId.value || `q-${Date.now()}`,
+  const payloadOptions =
+    questionForm.type === "Multiple Choice Question"
+      ? questionForm.options.map((o) => sanitizeText(o.text)).filter(Boolean)
+      : [];
+
+  const payloadCorrectAnswer =
+    questionForm.type === "Multiple Choice Question"
+      ? questionForm.correctOption
+      : "Theory Question";
+
+  // If connected to an existing test on the backend:
+  if (activeTestId.value) {
+    try {
+      if (
+        editingQuestionId.value &&
+        !String(editingQuestionId.value).startsWith("temp-") &&
+        !String(editingQuestionId.value).startsWith("import-")
+      ) {
+        const res = await editQuestion(editingQuestionId.value, {
+          questionText: sanitizeText(questionForm.text),
+          options: payloadOptions,
+          correctAnswer: payloadCorrectAnswer,
+        });
+
+        const updated = res.data.question;
+        const index = questions.value.findIndex(
+          (q) => q.id === editingQuestionId.value
+        );
+        if (index !== -1) {
+          questions.value[index] = {
+            id: updated._id,
+            _id: updated._id,
+            type: questionForm.type,
+            mark: Number(questionForm.mark),
+            text: updated.questionText,
+            options: clone(questionForm.options),
+            correctOption: updated.correctAnswer,
+          };
+        }
+        statusMessage.value = "Question updated in database.";
+        isStatusError.value = false;
+      } else {
+        const res = await addQuestion(activeTestId.value, {
+          questionText: sanitizeText(questionForm.text),
+          options: payloadOptions,
+          correctAnswer: payloadCorrectAnswer,
+        });
+
+        const created = res.data.question;
+        questions.value.push({
+          id: created._id,
+          _id: created._id,
+          type: questionForm.type,
+          mark: Number(questionForm.mark),
+          text: created.questionText,
+          options: clone(questionForm.options),
+          correctOption: created.correctAnswer,
+        });
+        statusMessage.value = "Question added to test database.";
+        isStatusError.value = false;
+      }
+
+      localStorage.setItem(STORAGE_KEYS.ACTIVE_TEST, activeTestId.value);
+      localStorage.setItem(STORAGE_KEYS.SELECTED_COURSE, testForm.courseId);
+
+      closeQuestionModal();
+      return;
+    } catch (err) {
+      questionError.value =
+        err.response?.data?.error ||
+        err.message ||
+        "Failed to save question to server.";
+      return;
+    }
+  }
+
+  // Local staging for test not yet scheduled (Draft mode):
+  const localItem = {
+    id: editingQuestionId.value || `temp-${Date.now()}`,
     type: questionForm.type,
     mark: Number(questionForm.mark),
     text: sanitizeText(questionForm.text),
-    options:
-      questionForm.type === "Multiple Choice Question"
-        ? questionForm.options.map((option) => ({
-            key: option.key,
-            text: sanitizeText(option.text),
-          }))
-        : [
-            { key: "A", text: "" },
-            { key: "B", text: "" },
-            { key: "C", text: "" },
-            { key: "D", text: "" },
-          ],
-    correctOption:
-      questionForm.type === "Multiple Choice Question"
-        ? questionForm.correctOption
-        : "",
+    options: clone(questionForm.options),
+    correctOption: questionForm.correctOption,
   };
 
   if (editingQuestionId.value) {
@@ -620,22 +1110,52 @@ function saveQuestion() {
     );
 
     if (index !== -1) {
-      questions.value.splice(index, 1, payload);
+      questions.value.splice(index, 1, localItem);
     }
   } else {
-    questions.value.push(payload);
+    questions.value.push(localItem);
   }
 
+  saveDraftToStorage();
+
   statusMessage.value = editingQuestionId.value
-    ? "Question updated successfully."
-    : "Question added successfully.";
+    ? "Question updated in draft (saved locally)."
+    : "Question added to draft (saved locally). Click 'Schedule Test' to publish to database.";
+  isStatusError.value = false;
 
   closeQuestionModal();
 }
 
-function deleteQuestion(questionId) {
-  questions.value = questions.value.filter((question) => question.id !== questionId);
-  statusMessage.value = "Question deleted successfully.";
+async function deleteQuestion(questionId) {
+  if (
+    activeTestId.value &&
+    !String(questionId).startsWith("temp-") &&
+    !String(questionId).startsWith("import-")
+  ) {
+    try {
+      await deleteQuestionApi(questionId);
+      questions.value = questions.value.filter(
+        (question) => question.id !== questionId
+      );
+      statusMessage.value = "Question deleted from database.";
+      isStatusError.value = false;
+      return;
+    } catch (err) {
+      statusMessage.value =
+        err.response?.data?.error || "Failed to delete question from database.";
+      isStatusError.value = true;
+      return;
+    }
+  }
+
+  questions.value = questions.value.filter(
+    (question) => question.id !== questionId
+  );
+  if (!activeTestId.value) {
+    saveDraftToStorage();
+  }
+  statusMessage.value = "Question removed.";
+  isStatusError.value = false;
 }
 
 function openImportModal() {
@@ -841,11 +1361,37 @@ function mapCsvRowsToQuestions(rows) {
     .filter(Boolean);
 }
 
-function appendImportedQuestions() {
+async function appendImportedQuestions() {
   if (importPreview.value.length === 0) return;
 
+  if (activeTestId.value) {
+    try {
+      const formatted = importPreview.value.map((q) => ({
+        questionText: q.text,
+        options: q.options.map((o) => o.text).filter(Boolean),
+        correctAnswer:
+          q.type === "Multiple Choice Question"
+            ? q.correctOption || "A"
+            : "Theory Question",
+      }));
+
+      await bulkUploadQuestions(activeTestId.value, { questions: formatted });
+      await fetchTestQuestions(activeTestId.value);
+      statusMessage.value = `${formatted.length} questions imported and saved to database!`;
+      isStatusError.value = false;
+      closeImportModal();
+      return;
+    } catch (err) {
+      importError.value =
+        err.response?.data?.error || "Failed to bulk upload questions.";
+      return;
+    }
+  }
+
   questions.value.push(...clone(importPreview.value));
-  statusMessage.value = `${importPreview.value.length} imported questions added successfully.`;
+  saveDraftToStorage();
+  statusMessage.value = `${importPreview.value.length} questions added to draft (saved locally).`;
+  isStatusError.value = false;
   closeImportModal();
 }
 
@@ -875,15 +1421,6 @@ function downloadTemplate() {
 function openPreviewModal() {
   previewModalOpen.value = true;
 }
-
-function scheduleTest() {
-  if (!testForm.title || questions.value.length === 0) {
-    statusMessage.value = "Add a test title and at least one question before scheduling.";
-    return;
-  }
-
-  statusMessage.value = "Test scheduled successfully.";
-}
 </script>
 
 <style scoped>
@@ -892,11 +1429,131 @@ function scheduleTest() {
 }
 
 .page-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
   margin-bottom: 24px;
 }
 
+.test-mode-selector {
+  display: flex;
+  align-items: center;
+}
+
+.select-test-label span {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.select-test-control {
+  min-width: 250px;
+  font-weight: 700;
+  border-color: #0875f5;
+  background-color: #f8fafc;
+}
+
+.heading-badge-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.badge-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.badge-active {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
+
+.badge-draft {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.draft-indicator-text {
+  font-size: 11px;
+  font-weight: 700;
+  color: #059669;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.header-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.discard-btn {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid #fecdd3;
+  background: #fff1f2;
+  color: #e11d48;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.discard-btn:hover {
+  background: #ffe4e6;
+  border-color: #fda4af;
+}
+
+.question-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.question-modal-header h2 {
+  margin: 0;
+}
+
+.modal-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.modal-subtext {
+  margin: 0 0 16px;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.45;
+}
+
 .page-heading h1 {
-  margin: 0 0 8px;
+  margin: 0;
   color: #111827;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 27px;
@@ -904,7 +1561,7 @@ function scheduleTest() {
 }
 
 .page-heading p {
-  margin: 0;
+  margin: 6px 0 0;
   color: #64748b;
   font-size: 13px;
 }
@@ -1125,6 +1782,10 @@ function scheduleTest() {
   color: #16a34a;
   font-size: 13px;
   font-weight: 900;
+}
+
+.status-message.status-error {
+  color: #ef4444;
 }
 
 .modal-backdrop {

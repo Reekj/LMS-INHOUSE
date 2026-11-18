@@ -149,9 +149,9 @@
           <label class="form-label">
             Post Type
             <select v-model="newPost.type" class="form-control">
-              <option>Question</option>
-              <option>Announcement</option>
-              <option>General</option>
+              <!-- Only lecturers and admins can post announcements. -->
+              <option value="Question">Question (notifies your lecturer)</option>
+              <option value="General">General (notifies your classmates)</option>
             </select>
           </label>
 
@@ -182,13 +182,19 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, onMounted } from "vue";
 import { useRoute } from "vue-router";
 
 import { useStudentStore } from "../../stores/student.store";
 
 const route = useRoute();
 const studentStore = useStudentStore();
+
+onMounted(async () => {
+  if (courseId.value) {
+    await studentStore.fetchCourseForum(courseId.value);
+  }
+});
 
 const quickPostText = ref("");
 const formError = ref("");
@@ -214,8 +220,8 @@ function toggleLike(postId) {
   studentStore.toggleDiscussionLike(postId);
 }
 
-function submitQuickPost() {
-  const result = studentStore.createDiscussionPost({
+async function submitQuickPost() {
+  const result = await studentStore.createDiscussionPost({
     courseId: courseId.value,
     type: "Question",
     body: quickPostText.value,
@@ -228,6 +234,7 @@ function submitQuickPost() {
 
   quickPostText.value = "";
   formError.value = "";
+  await studentStore.fetchCourseForum(courseId.value);
 }
 
 function startReply(post) {
@@ -240,23 +247,19 @@ function cancelReply() {
   replyText.value = "";
 }
 
-function submitReply(post) {
+async function submitReply(post) {
   if (!replyText.value) {
     formError.value = "Reply cannot be empty.";
     return;
   }
 
-  post.replies.push({
-    id: `reply-${Date.now()}`,
-    authorName: studentStore.currentStudent.name,
-    authorRole: "student",
-    initials: studentStore.currentStudent.initials,
-    body: replyText.value,
-    timeLabel: "Now",
-  });
-
-  studentStore.persist();
-  cancelReply();
+  const res = await studentStore.addDiscussionReply(post.id, replyText.value);
+  if (res.success) {
+    cancelReply();
+    await studentStore.fetchCourseForum(courseId.value);
+  } else {
+    formError.value = res.message || "Failed to submit reply.";
+  }
 }
 
 function closeNewPost() {
@@ -266,8 +269,8 @@ function closeNewPost() {
   modalError.value = "";
 }
 
-function submitNewPost() {
-  const result = studentStore.createDiscussionPost({
+async function submitNewPost() {
+  const result = await studentStore.createDiscussionPost({
     courseId: courseId.value,
     type: newPost.type,
     body: newPost.body,
@@ -279,6 +282,7 @@ function submitNewPost() {
   }
 
   closeNewPost();
+  await studentStore.fetchCourseForum(courseId.value);
 }
 </script>
 
