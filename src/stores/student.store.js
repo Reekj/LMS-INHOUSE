@@ -3,6 +3,7 @@ import { useAuthStore } from "./auth.store";
 import { getCourses, getCourseGrades } from "../api/course.api";
 import { getAllUsers } from "../api/user.api";
 import { getEvents } from "../api/event.api";
+import { getCourseTests } from "../api/test.api";
 import { getCourseAssignments, getMyGroup, createGroup, joinGroup, submitAssignment } from "../api/assignment.api";
 import { getCourseForumPosts, createForumPost, likeForumPost, addForumComment } from "../api/forum.api";
 
@@ -13,57 +14,17 @@ const LECTURER_WORKSPACE_KEY = "uniosun_lms_lecturer_workspace_v1";
 const defaultState = {
   currentStudent: {
     id: "stu-001",
-    name: "Adebayo Tunde",
-    firstName: "Tunde",
-    initials: "TA",
-    matricNo: "CSC/2021/042",
+    name: "Adebayo Johnson",
+    firstName: "Adebayo",
+    initials: "AJ",
+    matricNo: "NRS/2021/042",
     level: "300L",
-    department: "Computer Science",
-    departmentShort: "CSC Dept.",
+    department: "Nursing",
+    departmentShort: "Nursing Dept.",
     session: "2025/2026 Session - Semester 2",
   },
 
-  courses: [
-    {
-      id: "csc-112",
-      code: "CSC 112",
-      title: "Introduction to Computer Science",
-      shortTitle: "Introduction to Co...",
-      lecturer: "Dr. Folake Adesanya",
-      semester: "1st Semester",
-      color: "purple",
-      materialsCount: 5,
-      videosCount: 5,
-      assignmentsCount: 5,
-      discussionsCount: 3,
-    },
-    {
-      id: "csc-321",
-      code: "CSC 321",
-      title: "Data Structures & Algorithms",
-      shortTitle: "Data Science...",
-      lecturer: "Prof. Taiwo Akinwale",
-      semester: "1st Semester",
-      color: "blue",
-      materialsCount: 3,
-      videosCount: 2,
-      assignmentsCount: 2,
-      discussionsCount: 1,
-    },
-    {
-      id: "csc-322",
-      code: "CSC 322",
-      title: "Database Management Systems",
-      shortTitle: "Database Systems...",
-      lecturer: "Dr. Folake Adesanya",
-      semester: "1st Semester",
-      color: "green",
-      materialsCount: 2,
-      videosCount: 1,
-      assignmentsCount: 1,
-      discussionsCount: 1,
-    },
-  ],
+  courses: [],
 
   courseMaterials: [
     {
@@ -206,68 +167,7 @@ const defaultState = {
     },
   ],
 
-  assignments: [
-    {
-      id: "ass-1",
-      courseId: "csc-112",
-      courseCode: "CSC 112",
-      title: "Number Conversion",
-      due: "Mar 10",
-      maxScore: 20,
-      score: 16,
-      status: "Graded",
-      type: "individual",
-      instructions:
-        "Convert the given binary, decimal and hexadecimal numbers. Show all working clearly.",
-      fileTypes: "PDF, DOCX",
-      maxSize: "10 MB",
-      previousSubmissionTitle: "Number Conversion Practice",
-      comments: "",
-      submittedFileName: "",
-      feedback: "Good working. Improve formatting next time.",
-    },
-    {
-      id: "ass-2",
-      courseId: "csc-112",
-      courseCode: "CSC 112",
-      title: "Algorithm Design",
-      due: "Mar 27",
-      maxScore: 20,
-      score: 14,
-      status: "Graded",
-      type: "individual",
-      instructions:
-        "Design an algorithm and explain its time complexity using clear pseudocode.",
-      fileTypes: "PDF, DOCX",
-      maxSize: "10 MB",
-      comments: "",
-      submittedFileName: "",
-      feedback: "Nice attempt. Your complexity explanation needs more clarity.",
-    },
-    {
-      id: "ass-3",
-      courseId: "csc-112",
-      courseCode: "CSC 112",
-      title: "Database Structure",
-      due: "Apr 4",
-      maxScore: 20,
-      score: "",
-      status: "Due today",
-      type: "group",
-      groupMode: "manual",
-      studentGroupStatus: "none",
-      groupId: "",
-      inviteCode: "",
-      isLeader: false,
-      instructions:
-        "Write a 2–3 page report explaining ACID properties in database transaction management. Your report must define each ACID property with a real-world example, explain what happens when each property is violated, and describe how modern DBMS systems enforce ACID compliance.",
-      fileTypes: "PDF, DOCX",
-      maxSize: "10 MB",
-      comments: "",
-      submittedFileName: "",
-      feedback: "",
-    },
-  ],
+  assignments: [],
 
   groups: [
     {
@@ -785,7 +685,30 @@ function loadState() {
       ...clone(defaultState.currentStudent),
       ...(base.currentStudent || {}),
     },
-    courses: Array.isArray(base.courses) ? base.courses : clone(defaultState.courses),
+    courses: Array.isArray(base.courses)
+      ? base.courses.filter((c) => {
+          const id = String(c?.id || c?._id || "");
+          if (
+            !id ||
+            id.startsWith("csc-") ||
+            id.startsWith("mth-") ||
+            id.startsWith("nrs-") ||
+            id.startsWith("eee-") ||
+            id.startsWith("mee-") ||
+            id.startsWith("phy-") ||
+            id.startsWith("acc-") ||
+            id.startsWith("ecn-") ||
+            id.startsWith("bus-") ||
+            id.startsWith("pol-") ||
+            id.startsWith("pbh-") ||
+            id.startsWith("eng-") ||
+            id.startsWith("ict-")
+          ) {
+            return false;
+          }
+          return true;
+        })
+      : [],
     courseMaterials: [
       ...(Array.isArray(base.courseMaterials)
         ? base.courseMaterials
@@ -800,9 +723,11 @@ function loadState() {
     ],
     assignments: [
       ...(Array.isArray(base.assignments)
-        ? base.assignments
-        : clone(defaultState.assignments)),
-      ...lecturerAssignments.filter((item) => !savedAssignmentIds.has(item.id)),
+        ? base.assignments.filter((item) => item.courseId !== "csc-112")
+        : []),
+      ...lecturerAssignments.filter(
+        (item) => !savedAssignmentIds.has(item.id) && item.courseId !== "csc-112"
+      ),
     ],
     groups: Array.isArray(base.groups) ? base.groups : clone(defaultState.groups),
     previousSubmissions: Array.isArray(base.previousSubmissions)
@@ -879,39 +804,106 @@ export const useStudentStore = defineStore("student", {
     },
 
     getCourseById: (state) => (courseId) => {
-      return state.courses.find((course) => course.id === courseId);
+      const idStr = String(courseId || "");
+      const clean = (s) => String(s || "").toUpperCase().replace(/[\s\-_]+/g, "");
+      const norm = clean(idStr);
+      return state.courses.find(
+        (course) =>
+          String(course.id) === idStr ||
+          String(course._id) === idStr ||
+          (clean(course.code || course.courseCode) === norm && norm)
+      );
     },
 
     getMaterialsByCourse: (state) => (courseId) => {
-      return state.courseMaterials.filter((item) => item.courseId === courseId);
+      const idStr = String(courseId || "");
+      const courseObj = state.courses.find(
+        (c) => String(c.id) === idStr || String(c._id) === idStr
+      );
+      const validIds = new Set([idStr, ...(courseObj ? [String(courseObj.id), String(courseObj._id)] : [])]);
+      return state.courseMaterials.filter((item) => validIds.has(String(item.courseId)));
     },
 
     getVideosByCourse: (state) => (courseId) => {
-      return state.courseVideos.filter((item) => item.courseId === courseId);
+      const idStr = String(courseId || "");
+      const courseObj = state.courses.find(
+        (c) => String(c.id) === idStr || String(c._id) === idStr
+      );
+      const validIds = new Set([idStr, ...(courseObj ? [String(courseObj.id), String(courseObj._id)] : [])]);
+      return state.courseVideos.filter((item) => validIds.has(String(item.courseId)));
     },
 
     getAssignmentsByCourse: (state) => (courseId) => {
-      return state.assignments.filter((item) => item.courseId === courseId);
+      const idStr = String(courseId || "");
+      const clean = (s) => String(s || "").toUpperCase().replace(/[\s\-_]+/g, "");
+      const norm = clean(idStr);
+      const courseObj = state.courses.find(
+        (course) =>
+          String(course.id) === idStr ||
+          String(course._id) === idStr ||
+          (clean(course.code || course.courseCode) === norm && norm)
+      );
+      const validIds = new Set([
+        idStr,
+        norm,
+        ...(courseObj
+          ? [
+              String(courseObj.id),
+              String(courseObj._id),
+              clean(courseObj.code || courseObj.courseCode),
+            ]
+          : []),
+      ]);
+
+      return (state.assignments || []).filter((item) => {
+        const itemCId = String(item.courseId || "");
+        const itemCCode = item.courseCode || "";
+        const itemBackendId = String(item.backendCourseId || "");
+        return (
+          validIds.has(itemCId) ||
+          validIds.has(clean(itemCId)) ||
+          validIds.has(clean(itemCCode)) ||
+          validIds.has(itemBackendId)
+        );
+      });
     },
 
     getAssignmentById: (state) => (assignmentId) => {
-      return state.assignments.find((item) => item.id === assignmentId);
+      const idStr = String(assignmentId || "");
+      return state.assignments.find((item) => String(item.id) === idStr || String(item._id) === idStr);
     },
 
     getDiscussionsByCourse: (state) => (courseId) => {
-      return state.discussions.filter((item) => item.courseId === courseId);
+      const idStr = String(courseId || "");
+      const courseObj = state.courses.find(
+        (c) => String(c.id) === idStr || String(c._id) === idStr
+      );
+      const validIds = new Set([idStr, ...(courseObj ? [String(courseObj.id), String(courseObj._id)] : [])]);
+      return state.discussions.filter((item) => validIds.has(String(item.courseId)));
     },
 
     getGradesByCourse: (state) => (courseId) => {
-      return state.grades.filter((item) => item.courseId === courseId);
+      const idStr = String(courseId || "");
+      const courseObj = state.courses.find(
+        (c) => String(c.id) === idStr || String(c._id) === idStr
+      );
+      const validIds = new Set([idStr, ...(courseObj ? [String(courseObj.id), String(courseObj._id)] : [])]);
+      return state.grades.filter((item) => validIds.has(String(item.courseId)));
     },
 
     getGroupForAssignment: (state) => (assignmentId) => {
-      const assignment = state.assignments.find((item) => item.id === assignmentId);
+      const idStr = String(assignmentId || "");
+      const assignment = state.assignments.find((item) => String(item.id) === idStr || String(item._id) === idStr);
 
       if (!assignment?.groupId) return null;
 
-      return state.groups.find((group) => group.id === assignment.groupId) || null;
+      return (
+        state.groups.find(
+          (group) =>
+            String(group.id) === String(assignment.groupId) ||
+            String(group._id) === String(assignment.groupId)
+        ) || null
+      );
     },
   },
 
@@ -940,28 +932,87 @@ export const useStudentStore = defineStore("student", {
       );
     },
 
+    syncCurrentStudent(user) {
+      if (!user) return;
+      const fullName = user.name || "";
+      const nameParts = fullName.trim().split(/\s+/).filter(Boolean);
+      const firstName = user.firstName || nameParts[0] || "";
+      const initials = nameParts.map((p) => p[0]).slice(0, 2).join("").toUpperCase() || "ST";
+
+      this.currentStudent = {
+        ...this.currentStudent,
+        id: user.id || user._id || this.currentStudent?.id || "stu-001",
+        name: fullName || this.currentStudent?.name || "Student",
+        firstName: firstName || this.currentStudent?.firstName || "Student",
+        initials: initials || this.currentStudent?.initials || "ST",
+        matricNo: user.identifier || user.matricNo || this.currentStudent?.matricNo || "",
+        department: user.department || "Nursing",
+        email: user.email || this.currentStudent?.email || "",
+        phone: user.phone || this.currentStudent?.phone || "",
+      };
+      this.persist();
+    },
+
     async fetchStudentDataFromDB(studentId, enrolledCourseIds = []) {
       try {
         const [coursesRes, eventsRes] = await Promise.all([
           getCourses(),
           getEvents()
         ]);
-        const allCourses = coursesRes.data.courses || [];
+        const allCourses = coursesRes.data?.courses || [];
 
-        // Filter courses that are enrolled by this student
-        const myCourses = allCourses.filter(c => enrolledCourseIds.includes(c._id));
+        // Effective enrolled course IDs: combine parameter and authStore user enrolled courses
+        const authStore = useAuthStore();
+        if (authStore.user) {
+          this.syncCurrentStudent(authStore.user);
+        }
+        const authEnrolled = authStore.user?.enrolledCourses || [];
+        const effectiveEnrolledIds = new Set([
+          ...(Array.isArray(enrolledCourseIds) ? enrolledCourseIds.map(String) : []),
+          ...(Array.isArray(authEnrolled) ? authEnrolled.map(String) : [])
+        ]);
 
-        // Map courses
-        this.courses = myCourses.map(c => {
+        // Filter courses that are enrolled by this student from the backend database
+        const myDbCourses = allCourses.filter(c => effectiveEnrolledIds.has(String(c._id)));
+
+        // Map backend courses
+        const mappedDbCourses = myDbCourses.map(c => {
           return {
             id: c._id,
+            _id: c._id,
             code: c.courseCode,
             title: c.title,
             units: c.units || 3,
             lecturer: c.lecturer || "Not Assigned",
-            theme: "purple"
+            department: c.department || "General",
+            theme: "purple",
+            materialsCount: (c.materials || []).length || 3,
+            videosCount: 2,
+            assignmentsCount: 1,
+            discussionsCount: 2,
           };
         });
+
+        // Only keep real courses: courses from DB that the student is enrolled in, plus any real newly enrolled courses from allCourses
+        const allDbCourseIds = new Set(allCourses.map(c => String(c._id)));
+        const preservedLocalCourses = (this.courses || []).filter(c => {
+          const id = String(c.id || c._id || "");
+          const isRealCreatedCourse = allDbCourseIds.has(id);
+          const alreadyInMapped = mappedDbCourses.some(m => String(m.id || m._id) === id);
+          return isRealCreatedCourse && !alreadyInMapped;
+        });
+
+        this.courses = [...mappedDbCourses, ...preservedLocalCourses];
+        this.persist();
+
+        // Fetch assignments for all enrolled courses so student has them on initial load
+        try {
+          await Promise.all(
+            this.courses.map((c) => this.fetchAssignments(c.id || c._id))
+          );
+        } catch (e) {
+          console.warn("Error pre-fetching assignments for enrolled courses:", e);
+        }
 
         // Gather all materials and videos from enrolled courses
         const materialsList = [];
@@ -978,7 +1029,7 @@ export const useStudentStore = defineStore("student", {
           return "file";
         };
 
-        myCourses.forEach(c => {
+        myDbCourses.forEach(c => {
           const rawMaterials = c.materials || [];
           rawMaterials.forEach(m => {
             const mapped = {
@@ -1006,8 +1057,16 @@ export const useStudentStore = defineStore("student", {
           });
         });
 
-        this.courseMaterials = materialsList;
-        this.courseVideos = videosList;
+        if (materialsList.length > 0) {
+          const matIds = new Set(materialsList.map(m => m.id));
+          const existingMaterials = (this.courseMaterials || []).filter(m => !matIds.has(m.id));
+          this.courseMaterials = [...materialsList, ...existingMaterials];
+        }
+        if (videosList.length > 0) {
+          const vidIds = new Set(videosList.map(v => v.id));
+          const existingVideos = (this.courseVideos || []).filter(v => !vidIds.has(v.id));
+          this.courseVideos = [...videosList, ...existingVideos];
+        }
 
         const formatTime12h = (value) => {
           if (!value) return "";
@@ -1035,7 +1094,21 @@ export const useStudentStore = defineStore("student", {
 
         // Fetch and map calendar events
         const rawEvents = eventsRes.data.events || [];
-        this.calendarEvents = rawEvents.map(e => {
+        const courseTestResponses = await Promise.all(
+          myDbCourses.map((course) =>
+            getCourseTests(course._id).catch((err) => {
+              console.warn(`Failed to fetch tests for course ${course._id}:`, err);
+              return { data: { tests: [] } };
+            })
+          )
+        );
+        const scheduledTests = courseTestResponses.flatMap((response, index) =>
+          (response.data?.tests || []).map((test) => ({
+            ...test,
+            course: myDbCourses[index]._id,
+          }))
+        );
+        const calendarEvents = rawEvents.map(e => {
           const courseCode = e.course?.courseCode || "";
           const courseTitle = e.course?.title || "";
           const lecturerName = e.lecturer?.name || "Lecturer";
@@ -1051,12 +1124,39 @@ export const useStudentStore = defineStore("student", {
             date: String(e.date || "").split("T")[0],
             startTime: formatTime12h(e.startTime),
             endTime: formatTime12h(e.endTime),
+            frequency: e.frequency || "once",
+            recurrenceEndDate: String(e.recurrenceEndDate || "").split("T")[0],
             location: e.locationDetails || "Online",
             note: e.instruction || "Attendance is compulsory.",
             color: getColorFromType(type),
             type
           };
         });
+
+        this.calendarEvents = [
+          ...calendarEvents,
+          ...scheduledTests.map((test) => {
+            const course = myDbCourses.find(
+              (item) => String(item._id) === String(test.course)
+            );
+            return {
+              id: `test-${test._id}`,
+              title: course?.courseCode || "",
+              fullTitle: test.testTitle,
+              courseCode: course?.courseCode || "",
+              courseTitle: course?.title || "",
+              lecturer: "Lecturer",
+              date: String(test.date || "").split("T")[0],
+              startTime: formatTime12h(test.startTime),
+              endTime: formatTime12h(test.endTime),
+              location: "Online (LMS)",
+              note: test.instructions || "Scheduled online test.",
+              color: "green",
+              type: "test",
+              frequency: "once",
+            };
+          }),
+        ];
 
         this.persist();
       } catch (err) {
@@ -1292,20 +1392,29 @@ export const useStudentStore = defineStore("student", {
     },
 
     async fetchAssignments(courseId) {
+      if (!courseId) return;
+
+      const courseObj = this.getCourseById(courseId);
+      const effectiveCourseId = courseObj?._id || courseObj?.id || courseId;
+
       try {
-        const res = await getCourseAssignments(courseId);
-        if (res.data && res.data.success) {
-          this.assignments = res.data.assignments.map(a => {
+        const res = await getCourseAssignments(effectiveCourseId);
+        if (res.data && res.data.success && Array.isArray(res.data.assignments)) {
+          const fetched = res.data.assignments.map((a) => {
             return {
               id: a._id,
-              courseId: a.course,
-              courseCode: this.courses.find(c => c.id === a.course)?.code || "",
+              _id: a._id,
+              courseId: courseId,
+              backendCourseId: a.course,
+              courseCode: a.courseCode || courseObj?.code || "",
               title: a.title,
-              due: new Date(a.dueDate).toLocaleDateString(),
-              maxScore: a.groupSize ? 100 : 20,
-              status: "Not Submitted",
-              type: a.isGroupAssignment ? "group" : "individual",
-              instructions: a.description || "",
+              due: a.dueDate ? new Date(a.dueDate).toLocaleDateString() : "Not set",
+              maxScore: Number(a.totalMarks) || (a.groupSize ? 100 : 20),
+              score: "",
+              status: "Due today",
+              type: a.isGroupAssignment || a.type === "grouped" ? "group" : "individual",
+              groupMode: a.groupMethod || "student_choose",
+              instructions: a.description || "No assignment instruction provided.",
               fileTypes: "PDF, DOCX",
               maxSize: "10 MB",
               comments: "",
@@ -1314,13 +1423,72 @@ export const useStudentStore = defineStore("student", {
               studentGroupStatus: a.isGroupAssignment ? "none" : null,
               groupId: null,
               inviteCode: "",
-              isLeader: false
+              isLeader: false,
             };
           });
+
+          // Merge without losing assignments from other courses
+          const otherCoursesAssignments = (this.assignments || []).filter(
+            (item) => String(item.courseId) !== String(courseId)
+          );
+          // Also keep any local submissions/states for assignments that already exist
+          const mergedThisCourse = fetched.map((newItem) => {
+            const existing = (this.assignments || []).find((e) => String(e.id) === String(newItem.id));
+            if (existing) {
+              return {
+                ...newItem,
+                ...existing,
+                title: newItem.title,
+                instructions: newItem.instructions,
+                due: newItem.due,
+              };
+            }
+            return newItem;
+          });
+
+          this.assignments = [...mergedThisCourse, ...otherCoursesAssignments];
           this.persist();
         }
       } catch (err) {
-        console.error("Failed to fetch assignments:", err);
+        console.warn("Failed to fetch assignments from API:", err);
+      }
+
+      // Sync from lecturerWorkspace in localStorage if available
+      try {
+        const lecturerWs = loadJsonFromLocalStorage(LECTURER_WORKSPACE_KEY, { assignments: [] });
+        if (Array.isArray(lecturerWs.assignments) && lecturerWs.assignments.length > 0) {
+          const clean = (s) => String(s || "").toUpperCase().replace(/[\s\-_]+/g, "");
+          const matchingLecturerAssignments = lecturerWs.assignments.filter((item) => {
+            const itemCId = String(item.courseId || "");
+            const itemCCode = item.courseCode || "";
+            return (
+              itemCId === String(courseId) ||
+              clean(itemCId) === clean(courseId) ||
+              (itemCCode && clean(itemCCode) === clean(courseId)) ||
+              (courseObj &&
+                (itemCId === String(courseObj.id) ||
+                  itemCId === String(courseObj._id) ||
+                  clean(itemCId) === clean(courseObj.code) ||
+                  clean(itemCCode) === clean(courseObj.code)))
+            );
+          });
+
+          const currentIds = new Set((this.assignments || []).map((a) => String(a.id)));
+          const toAdd = matchingLecturerAssignments
+            .filter((item) => !currentIds.has(String(item.id)))
+            .map((item) => ({
+              ...mapLecturerAssignmentToStudent(item),
+              courseId: courseId,
+              courseCode: courseObj?.code || item.courseCode || "",
+            }));
+
+          if (toAdd.length > 0) {
+            this.assignments.unshift(...toAdd);
+            this.persist();
+          }
+        }
+      } catch (e) {
+        console.warn("Error syncing local lecturer assignments:", e);
       }
     },
 

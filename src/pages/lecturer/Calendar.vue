@@ -127,6 +127,16 @@
               </select>
             </label>
 
+            <label v-if="eventForm.frequency !== 'once'" class="form-label">
+              Repeat until
+              <input
+                v-model="eventForm.recurrenceEndDate"
+                class="form-input"
+                type="date"
+                :min="eventForm.date"
+              />
+            </label>
+
             <label class="form-label">
               Title
               <input
@@ -218,6 +228,9 @@
         <p class="event-note">
           {{ selectedEvent.instructions }}
         </p>
+        <p v-if="selectedEvent.frequency !== 'once'" class="event-note">
+          This is a recurring event. Editing or deleting it applies to the whole series.
+        </p>
 
         <div class="view-actions">
           <button type="button" class="outline-btn" @click="deleteSelectedEvent">
@@ -240,6 +253,7 @@ import { CalendarDays, Clock, MapPin } from "lucide-vue-next";
 import AppModal from "../../components/common/AppModal.vue";
 import { useLecturerCoursesStore } from "../../stores/lecturerCourses.store";
 import { getEvents, createEvent, editEvent, deleteEvent } from "../../api/event.api";
+import { eventsForDate as occurrencesForDate } from "../../utils/calendarEvents";
 
 const coursesStore = useLecturerCoursesStore();
 
@@ -325,6 +339,7 @@ const eventForm = reactive({
   endTime: "14:00",
   location: "Online",
   frequency: "once",
+  recurrenceEndDate: "",
   instructions: "",
 });
 
@@ -449,13 +464,13 @@ function mapDBEventForUI(e) {
     location: e.locationDetails || "Online",
     locationType: e.locationType || "online",
     frequency: e.frequency || "once",
+    recurrenceEndDate: String(e.recurrenceEndDate || "").split("T")[0],
     instructions: e.instruction || "",
   };
 }
 
 function eventsForDate(dateKey) {
-  return events.value
-    .filter((event) => event.date === dateKey)
+  return occurrencesForDate(events.value, dateKey)
     .sort((a, b) => a.startTime.localeCompare(b.startTime));
 }
 
@@ -500,6 +515,7 @@ function resetForm() {
     endTime: "14:00",
     location: "Online",
     frequency: "once",
+    recurrenceEndDate: "",
     instructions: "",
   });
 
@@ -535,13 +551,15 @@ function openEditFromView() {
   Object.assign(eventForm, {
     courseId: selectedEvent.value.courseId,
     title: selectedEvent.value.title,
-    date: selectedEvent.value.date,
+    date: selectedEvent.value.seriesStartDate || selectedEvent.value.date,
     startTime: selectedEvent.value.startTime,
     endTime: selectedEvent.value.endTime,
     location: selectedEvent.value.location,
     frequency: selectedEvent.value.frequency,
+    recurrenceEndDate: selectedEvent.value.recurrenceEndDate,
     instructions: selectedEvent.value.instructions,
   });
+  editingEventId.value = selectedEvent.value.eventId || selectedEvent.value.id;
 
   isViewModalOpen.value = false;
   isEventFormOpen.value = true;
@@ -552,6 +570,10 @@ function validateForm() {
 
   if (!title) return "Event title is required.";
   if (!eventForm.date) return "Event date is required.";
+  if (eventForm.frequency !== "once" &&
+    (!eventForm.recurrenceEndDate || eventForm.recurrenceEndDate < eventForm.date)) {
+    return "Choose a recurrence end date on or after the event date.";
+  }
   if (!eventForm.startTime || !eventForm.endTime) return "Start and end time are required.";
 
   if (timeToMinutes(eventForm.endTime) <= timeToMinutes(eventForm.startTime)) {
@@ -577,6 +599,7 @@ function buildPayload() {
     endTime: eventForm.endTime,
     location: sanitizeText(eventForm.location),
     frequency: sanitizeText(eventForm.frequency),
+    recurrenceEndDate: eventForm.recurrenceEndDate,
     instructions: sanitizeText(eventForm.instructions) || "Attendance is compulsory.",
   };
 }
@@ -586,6 +609,7 @@ function buildApiPayload() {
     title: sanitizeText(eventForm.title),
     course: eventForm.courseId,
     frequency: eventForm.frequency,
+    recurrenceEndDate: eventForm.frequency === "once" ? undefined : eventForm.recurrenceEndDate,
     locationType: eventForm.location.toLowerCase() === "online" ? "online" : "physical",
     locationDetails: sanitizeText(eventForm.location),
     instruction: sanitizeText(eventForm.instructions) || "Attendance is compulsory.",
@@ -644,7 +668,7 @@ async function saveEvent() {
 async function deleteSelectedEvent() {
   if (import.meta.env.VITE_API_URL) {
     try {
-      await deleteEvent(selectedEvent.value.id);
+      await deleteEvent(selectedEvent.value.eventId || selectedEvent.value.id);
       await fetchEventsData();
       isViewModalOpen.value = false;
     } catch (err) {
@@ -652,7 +676,9 @@ async function deleteSelectedEvent() {
       alert(err.response?.data?.error || err.message || "Failed to delete event.");
     }
   } else {
-    events.value = events.value.filter((event) => event.id !== selectedEvent.value.id);
+    events.value = events.value.filter((event) =>
+      event.id !== (selectedEvent.value.eventId || selectedEvent.value.id)
+    );
     isViewModalOpen.value = false;
   }
 }

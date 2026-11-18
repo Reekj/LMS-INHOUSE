@@ -2,11 +2,11 @@
   <section class="calendar-page">
     <div class="page-heading">
       <h1>{{ viewMode === "week" ? "Academic Calendar" : "Calendar" }}</h1>
-      <p>Sunday, 29 March 2026 <span>·</span> Week 9 of 15</p>
+      <p>{{ formattedToday }} <span>·</span> {{ weekLabel }}</p>
     </div>
 
     <div class="calendar-top-row">
-      <h2>May 2026</h2>
+      <h2>{{ monthLabel }}</h2>
 
       <div class="calendar-controls">
         <div class="view-toggle">
@@ -34,17 +34,6 @@
     </div>
 
     <section v-if="viewMode === 'month'" class="month-calendar">
-      <div class="academic-band-row">
-        <div
-          v-for="band in monthBands"
-          :key="band.id"
-          class="academic-band"
-          :class="band.color"
-        >
-          {{ band.title }}
-        </div>
-      </div>
-
       <div class="weekday-row">
         <span v-for="day in weekDays" :key="day">{{ day }}</span>
       </div>
@@ -56,7 +45,7 @@
           class="month-cell"
           :class="day.className"
         >
-          <span class="cell-date" :class="{ today: day.dateNumber === '01' }">
+          <span class="cell-date" :class="{ today: day.isoDate === todayDateKey }">
             {{ day.dateNumber }}
           </span>
 
@@ -76,7 +65,7 @@
 
     <section v-else class="week-calendar">
       <div class="week-band">
-        May 1 - 5 Mid-Semester Tests (CA)
+        {{ weekLabel }}
       </div>
 
       <div class="week-header">
@@ -154,12 +143,14 @@ import { CalendarDays, Clock3, MapPin } from "lucide-vue-next";
 
 import { useStudentStore } from "../../stores/student.store";
 import { useAuthStore } from "../../stores/auth.store";
+import { eventsForDate as occurrencesForDate } from "../../utils/calendarEvents";
 
 const studentStore = useStudentStore();
 const authStore = useAuthStore();
 
 const viewMode = ref("month");
 const selectedEvent = ref(null);
+const currentDate = ref(new Date());
 
 onMounted(async () => {
   if (import.meta.env.VITE_API_URL && authStore.user) {
@@ -171,61 +162,53 @@ const weekDays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
 const weekTimes = ["9AM", "10AM", "11AM", "NOON", "1PM", "2PM", "3PM", "4PM", "5PM"];
 
-const weekViewDays = [
-  { key: "2026-05-31", label: "Sun 31" },
-  { key: "2026-05-01", label: "Mon 1" },
-  { key: "2026-05-02", label: "Tue 2" },
-  { key: "2026-05-03", label: "Wed 3" },
-  { key: "2026-05-04", label: "Thu 4" },
-  { key: "2026-05-05", label: "Fri 4" },
-  { key: "2026-05-06", label: "Sat 5" },
-];
-
-const monthBands = computed(() => studentStore.academicBands);
+const todayDateKey = toDateKey(new Date());
+const formattedToday = computed(() =>
+  new Date().toLocaleDateString("en-US", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  })
+);
+const monthLabel = computed(() =>
+  currentDate.value.toLocaleDateString("en-US", { month: "long", year: "numeric" })
+);
+const weekViewDays = computed(() => {
+  const start = startOfWeek(currentDate.value);
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = addDays(start, index);
+    return {
+      key: toDateKey(date),
+      label: date.toLocaleDateString("en-US", { weekday: "short", day: "numeric" }),
+    };
+  });
+});
+const weekLabel = computed(() => {
+  const start = startOfWeek(currentDate.value);
+  const end = addDays(start, 6);
+  const startLabel = start.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const endLabel = end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return `${startLabel} - ${endLabel}`;
+});
 
 const monthCells = computed(() => {
-  const cells = [
-    { dateNumber: "29", isoDate: "2026-04-29", className: "muted" },
-    { dateNumber: "30", isoDate: "2026-04-30", className: "muted" },
-    { dateNumber: "01", isoDate: "2026-05-01", className: "test-week" },
-    { dateNumber: "02", isoDate: "2026-05-02", className: "test-week" },
-    { dateNumber: "03", isoDate: "2026-05-03", className: "test-week" },
-    { dateNumber: "04", isoDate: "2026-05-04", className: "test-week" },
-    { dateNumber: "05", isoDate: "2026-05-05", className: "test-week" },
-    { dateNumber: "06", isoDate: "2026-05-06", className: "" },
-    { dateNumber: "07", isoDate: "2026-05-07", className: "" },
-    { dateNumber: "08", isoDate: "2026-05-08", className: "" },
-    { dateNumber: "09", isoDate: "2026-05-09", className: "" },
-    { dateNumber: "10", isoDate: "2026-05-10", className: "" },
-    { dateNumber: "11", isoDate: "2026-05-11", className: "" },
-    { dateNumber: "12", isoDate: "2026-05-12", className: "" },
-    { dateNumber: "13", isoDate: "2026-05-13", className: "" },
-    { dateNumber: "14", isoDate: "2026-05-14", className: "revision-week" },
-    { dateNumber: "15", isoDate: "2026-05-15", className: "revision-week" },
-    { dateNumber: "16", isoDate: "2026-05-16", className: "revision-week" },
-    { dateNumber: "17", isoDate: "2026-05-17", className: "revision-week" },
-    { dateNumber: "18", isoDate: "2026-05-18", className: "revision-week" },
-    { dateNumber: "19", isoDate: "2026-05-19", className: "" },
-    { dateNumber: "20", isoDate: "2026-05-20", className: "" },
-    { dateNumber: "21", isoDate: "2026-05-21", className: "" },
-    { dateNumber: "22", isoDate: "2026-05-22", className: "" },
-    { dateNumber: "23", isoDate: "2026-05-23", className: "" },
-    { dateNumber: "24", isoDate: "2026-05-24", className: "" },
-    { dateNumber: "25", isoDate: "2026-05-25", className: "" },
-    { dateNumber: "26", isoDate: "2026-05-26", className: "" },
-    { dateNumber: "27", isoDate: "2026-05-27", className: "" },
-    { dateNumber: "28", isoDate: "2026-05-28", className: "" },
-    { dateNumber: "29", isoDate: "2026-05-29", className: "holiday" },
-    { dateNumber: "30", isoDate: "2026-05-30", className: "" },
-    { dateNumber: "31", isoDate: "2026-05-31", className: "" },
-    { dateNumber: "01", isoDate: "2026-06-01", className: "muted" },
-    { dateNumber: "02", isoDate: "2026-06-02", className: "muted" },
-  ];
-
-  return cells.map((cell, index) => ({
-    ...cell,
-    key: `${cell.isoDate}-${index}`,
-  }));
+  const firstDay = new Date(
+    currentDate.value.getFullYear(),
+    currentDate.value.getMonth(),
+    1
+  );
+  const gridStart = startOfWeek(firstDay);
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = addDays(gridStart, index);
+    const isoDate = toDateKey(date);
+    return {
+      isoDate,
+      dateNumber: String(date.getDate()).padStart(2, "0"),
+      className: date.getMonth() === currentDate.value.getMonth() ? "" : "muted",
+      key: isoDate,
+    };
+  });
 });
 
 const readableEventDate = computed(() => {
@@ -242,12 +225,11 @@ const readableEventDate = computed(() => {
 });
 
 function eventsForDate(date) {
-  return studentStore.calendarEvents.filter((event) => event.date === date);
+  return occurrencesForDate(studentStore.calendarEvents, date);
 }
 
 function weekEventsForDay(date) {
-  return studentStore.calendarEvents
-    .filter((event) => event.date === date)
+  return occurrencesForDate(studentStore.calendarEvents, date)
     .map((event) => ({
       ...event,
       weekTop: weekTopFromTime(event.startTime),
@@ -262,16 +244,44 @@ function weekTopFromTime(time) {
   return `${Math.max(16, top)}px`;
 }
 
+function toDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function startOfWeek(date) {
+  const start = new Date(date);
+  start.setDate(start.getDate() - start.getDay());
+  start.setHours(0, 0, 0, 0);
+  return start;
+}
+
+function addDays(date, amount) {
+  const result = new Date(date);
+  result.setDate(result.getDate() + amount);
+  return result;
+}
+
 function openEvent(event) {
   selectedEvent.value = event;
 }
 
 function previousPeriod() {
-  viewMode.value = viewMode.value === "month" ? "week" : "month";
+  if (viewMode.value === "month") {
+    currentDate.value = new Date(currentDate.value.getFullYear(), currentDate.value.getMonth() - 1, 1);
+  } else {
+    currentDate.value = addDays(currentDate.value, -7);
+  }
 }
 
 function nextPeriod() {
-  viewMode.value = viewMode.value === "month" ? "week" : "month";
+  if (viewMode.value === "month") {
+    currentDate.value = new Date(currentDate.value.getFullYear(), currentDate.value.getMonth() + 1, 1);
+  } else {
+    currentDate.value = addDays(currentDate.value, 7);
+  }
 }
 </script>
 

@@ -457,10 +457,10 @@ export const useStudentTestsStore = defineStore("studentTests", {
             number: idx + 1,
             question: q.questionText,
             options: [
-              { id: 'A', text: q.options?.A || "" },
-              { id: 'B', text: q.options?.B || "" },
-              { id: 'C', text: q.options?.C || "" },
-              { id: 'D', text: q.options?.D || "" }
+              { id: 'A', text: Array.isArray(q.options) ? (q.options[0] || "") : (q.options?.A || "") },
+              { id: 'B', text: Array.isArray(q.options) ? (q.options[1] || "") : (q.options?.B || "") },
+              { id: 'C', text: Array.isArray(q.options) ? (q.options[2] || "") : (q.options?.C || "") },
+              { id: 'D', text: Array.isArray(q.options) ? (q.options[3] || "") : (q.options?.D || "") }
             ],
             correctAnswer: ""
           }));

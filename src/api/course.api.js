@@ -4,6 +4,11 @@ export const getCourses = () => {
   return api.get("/courses");
 };
 
+export const enrollCourse = (payload) => {
+  const body = typeof payload === "object" ? payload : { courseId: payload };
+  return api.post("/courses/enroll", body);
+};
+
 export const createCourse = (payload) => {
   return api.post("/courses/create-course", payload);
 };

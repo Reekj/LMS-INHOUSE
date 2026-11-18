@@ -65,7 +65,8 @@ export const useAuthStore = defineStore("auth", {
         try {
           const res = await loginUser({
             loginKey: email,
-            password: password
+            password,
+            institutionCode: sanitizeText(payload.institutionCode).toLowerCase(),
           });
 
           const { token, user } = res.data;
@@ -102,6 +103,9 @@ export const useAuthStore = defineStore("auth", {
           email: "sola@uniosun.edu.ng",
           role: "admin",
           label: "Admin",
+          identifier: "ADMIN/001",
+          department: "Administration",
+          phone: "+234 802 345 6789",
         },
         lecturer: {
           id: "lec-001",
@@ -109,6 +113,9 @@ export const useAuthStore = defineStore("auth", {
           email: "folake@uniosun.edu.ng",
           role: "lecturer",
           label: "Lecturer",
+          identifier: "STAFF/CSC/0042",
+          department: "Computer Science",
+          phone: "+234 803 456 7890",
         },
         student: {
           id: "stu-001",
@@ -116,13 +123,35 @@ export const useAuthStore = defineStore("auth", {
           email: "adebayo@student.uniosun.edu.ng",
           role: "student",
           label: "Student",
+          identifier: "NRS/2021/042",
+          department: "Nursing",
+          level: "300L",
+          phone: "+234 803 123 4567",
         },
       };
 
-      const selectedUser = roleProfiles[role];
-
-      if (!selectedUser) {
+      if (!roleProfiles[role]) {
         throw new Error("Invalid login role selected.");
+      }
+
+      const selectedUser = { ...roleProfiles[role] };
+      if (email && email.includes("@")) {
+        selectedUser.email = email;
+        const namePart = email.split("@")[0].replace(/[._-]/g, " ");
+        const capitalized = namePart
+          .split(" ")
+          .filter(Boolean)
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(" ");
+        if (
+          capitalized &&
+          !email.includes("student") &&
+          !email.includes("adebayo") &&
+          !email.includes("sola") &&
+          !email.includes("folake")
+        ) {
+          selectedUser.name = capitalized;
+        }
       }
 
       const dummyToken = `dummy_${role}_token_${Date.now()}`;
@@ -149,6 +178,8 @@ export const useAuthStore = defineStore("auth", {
       this.isAuthenticated = false;
       clearToken();
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem("uniosun_lms_student_v1");
+      localStorage.removeItem("uniosun_lms_student_settings_v1");
 
       if (import.meta.env.VITE_API_URL && token && !token.startsWith("dummy_")) {
         try {

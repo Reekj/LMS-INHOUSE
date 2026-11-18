@@ -7,6 +7,12 @@ import {
   addForumComment, 
   deleteForumPost 
 } from "../api/forum.api";
+import {
+  createAssignment as createAssignmentApi,
+  getCourseAssignments,
+  updateAssignment as updateAssignmentApi,
+  deleteAssignment as deleteAssignmentApi,
+} from "../api/assignment.api";
 
 const STORAGE_KEY = "uniosun_lms_lecturer_workspace_v1";
 
@@ -307,7 +313,17 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
 
   getters: {
     getAssignmentsByCourse: (state) => (courseId) => {
-      return state.assignments.filter((item) => item.courseId === courseId);
+      const idStr = String(courseId || "");
+      const norm = idStr.toUpperCase().replace(/\s+/g, "");
+      return state.assignments.filter((item) => {
+        const itemCId = String(item.courseId || "");
+        const itemCCode = (item.courseCode || "").toUpperCase().replace(/\s+/g, "");
+        return (
+          itemCId === idStr ||
+          (norm && itemCId.toUpperCase().replace(/\s+/g, "") === norm) ||
+          (norm && itemCCode === norm)
+        );
+      });
     },
 
     getAssignmentById: (state) => (assignmentId) => {
@@ -526,12 +542,82 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
       }
     },
 
-    createAssignment(payload) {
+    async fetchAssignments(courseId) {
+      if (!courseId) return;
+      try {
+        const res = await getCourseAssignments(courseId);
+        if (res.data && res.data.success && Array.isArray(res.data.assignments)) {
+          const fetched = res.data.assignments.map((a) => {
+            return {
+              id: a._id,
+              _id: a._id,
+              courseId: courseId,
+              title: a.title,
+              description: a.description,
+              type: a.isGroupAssignment || a.type === "grouped" ? "grouped" : "individual",
+              submissionType: a.submissionType || "File Upload",
+              totalMarks: a.totalMarks || 20,
+              dueDate: a.dueDate ? new Date(a.dueDate).toISOString().split("T")[0] : "",
+              dueTime: a.dueTime || "23:59",
+              groupMethod: a.groupMethod || "student_choose",
+              groupSize: a.groupSize || 4,
+              groups: [],
+              status: a.status || "Published",
+              createdAt: a.createdAt || new Date().toISOString(),
+            };
+          });
+
+          const otherCoursesAssignments = this.assignments.filter(
+            (item) => String(item.courseId) !== String(courseId)
+          );
+          const existingIds = new Set(fetched.map((f) => String(f.id)));
+          const preservedLocal = this.assignments.filter(
+            (item) => String(item.courseId) === String(courseId) && !existingIds.has(String(item.id))
+          );
+
+          this.assignments = [...fetched, ...preservedLocal, ...otherCoursesAssignments];
+          this.persist();
+        }
+      } catch (err) {
+        console.warn("Failed to fetch lecturer assignments from backend:", err);
+      }
+    },
+
+    async createAssignment(payload) {
       const courseId = sanitizeText(payload.courseId);
       const type = payload.type === "grouped" ? "grouped" : "individual";
       const groupMethod = sanitizeText(payload.groupMethod || "student_choose");
       const groupSize = Math.max(1, Number(payload.groupSize) || 1);
       const students = MOCK_STUDENTS_BY_COURSE[courseId] || [];
+
+      let backendAssignment = null;
+      try {
+        const apiPayload = {
+          course: courseId,
+          courseId,
+          title: sanitizeText(payload.title),
+          description: sanitizeText(payload.description),
+          dueDate: payload.dueDate
+            ? `${payload.dueDate}T${payload.dueTime || "23:59"}:00`
+            : new Date().toISOString(),
+          dueTime: payload.dueTime || "23:59",
+          type,
+          isGroupAssignment: type === "grouped",
+          groupMethod,
+          groupSize,
+          submissionType: sanitizeText(payload.submissionType || "File Upload"),
+          totalMarks: Number(payload.totalMarks) || 20,
+        };
+        const res = await createAssignmentApi(apiPayload);
+        if (res.data?.assignment) {
+          backendAssignment = res.data.assignment;
+        }
+      } catch (err) {
+        console.warn(
+          "Backend createAssignment API error, saving locally:",
+          err.response?.data?.error || err.message
+        );
+      }
 
       let groups = [];
 
@@ -553,9 +639,12 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
         ];
       }
 
+      const assignedId = backendAssignment?._id || `ass-${Date.now()}`;
       const assignment = {
-        id: `ass-${Date.now()}`,
+        id: assignedId,
+        _id: assignedId,
         courseId,
+        courseCode: payload.courseCode || courseId,
         title: sanitizeText(payload.title),
         description: sanitizeText(payload.description),
         type,
@@ -574,11 +663,51 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
       this.gradeBook.unshift(...buildMockSubmissions(assignment));
       this.persist();
 
+      // Sync directly to student storage in the browser
+      try {
+        const studentStoreKey = "uniosun_lms_student_v1";
+        const studentData = JSON.parse(localStorage.getItem(studentStoreKey) || "{}");
+        if (studentData && Array.isArray(studentData.assignments)) {
+          const mappedForStudent = {
+            id: assignedId,
+            _id: assignedId,
+            courseId: courseId,
+            courseCode: payload.courseCode || courseId,
+            title: assignment.title,
+            due: assignment.dueDate || "Not set",
+            maxScore: assignment.totalMarks,
+            score: "",
+            status: "Due today",
+            type: type === "grouped" ? "group" : "individual",
+            groupMode: groupMethod,
+            studentGroupStatus: "none",
+            groupId: "",
+            inviteCode: "",
+            isLeader: false,
+            instructions: assignment.description,
+            fileTypes: "PDF, DOCX",
+            maxSize: "10 MB",
+            comments: "",
+            submittedFileName: "",
+            feedback: "",
+          };
+          const alreadyExists = studentData.assignments.some(
+            (a) => String(a.id) === String(assignedId)
+          );
+          if (!alreadyExists) {
+            studentData.assignments.unshift(mappedForStudent);
+            localStorage.setItem(studentStoreKey, JSON.stringify(studentData));
+          }
+        }
+      } catch (e) {
+        console.warn("Could not sync assignment to student local storage:", e);
+      }
+
       return assignment;
     },
 
-    updateAssignment(assignmentId, payload) {
-      const index = this.assignments.findIndex((item) => item.id === assignmentId);
+    async updateAssignment(assignmentId, payload) {
+      const index = this.assignments.findIndex((item) => String(item.id) === String(assignmentId));
 
       if (index === -1) {
         return { success: false, message: "Assignment not found." };
@@ -589,6 +718,25 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
       const groupMethod = sanitizeText(payload.groupMethod || existing.groupMethod);
       const groupSize = Math.max(1, Number(payload.groupSize) || 1);
       const students = MOCK_STUDENTS_BY_COURSE[existing.courseId] || [];
+
+      try {
+        await updateAssignmentApi(assignmentId, {
+          title: sanitizeText(payload.title),
+          description: sanitizeText(payload.description),
+          dueDate: payload.dueDate
+            ? `${payload.dueDate}T${payload.dueTime || "23:59"}:00`
+            : undefined,
+          dueTime: payload.dueTime || "23:59",
+          type,
+          isGroupAssignment: type === "grouped",
+          groupMethod,
+          groupSize,
+          submissionType: sanitizeText(payload.submissionType || "File Upload"),
+          totalMarks: Number(payload.totalMarks) || 20,
+        });
+      } catch (err) {
+        console.warn("Backend updateAssignment failed, continuing local update:", err.message);
+      }
 
       let groups = existing.groups || [];
 
@@ -632,21 +780,59 @@ export const useLecturerWorkspaceStore = defineStore("lecturerWorkspace", {
       this.assignments.splice(index, 1, updated);
 
       this.gradeBook = this.gradeBook.filter(
-        (item) => item.assignmentId !== assignmentId
+        (item) => String(item.assignmentId) !== String(assignmentId)
       );
       this.gradeBook.unshift(...buildMockSubmissions(updated));
 
       this.persist();
 
+      try {
+        const studentStoreKey = "uniosun_lms_student_v1";
+        const studentData = JSON.parse(localStorage.getItem(studentStoreKey) || "{}");
+        if (studentData && Array.isArray(studentData.assignments)) {
+          const sIndex = studentData.assignments.findIndex((a) => String(a.id) === String(assignmentId));
+          if (sIndex !== -1) {
+            studentData.assignments[sIndex] = {
+              ...studentData.assignments[sIndex],
+              title: updated.title,
+              instructions: updated.description,
+              due: updated.dueDate || "Not set",
+              maxScore: updated.totalMarks,
+              type: type === "grouped" ? "group" : "individual",
+            };
+            localStorage.setItem(studentStoreKey, JSON.stringify(studentData));
+          }
+        }
+      } catch (e) {
+        console.warn("Could not sync assignment update to student local storage:", e);
+      }
+
       return { success: true, assignment: updated };
     },
 
-    deleteAssignment(assignmentId) {
-      this.assignments = this.assignments.filter((item) => item.id !== assignmentId);
+    async deleteAssignment(assignmentId) {
+      try {
+        await deleteAssignmentApi(assignmentId);
+      } catch (err) {
+        console.warn("Backend deleteAssignment failed, continuing local delete:", err.message);
+      }
+
+      this.assignments = this.assignments.filter((item) => String(item.id) !== String(assignmentId));
       this.gradeBook = this.gradeBook.filter(
-        (item) => item.assignmentId !== assignmentId
+        (item) => String(item.assignmentId) !== String(assignmentId)
       );
       this.persist();
+
+      try {
+        const studentStoreKey = "uniosun_lms_student_v1";
+        const studentData = JSON.parse(localStorage.getItem(studentStoreKey) || "{}");
+        if (studentData && Array.isArray(studentData.assignments)) {
+          studentData.assignments = studentData.assignments.filter((a) => String(a.id) !== String(assignmentId));
+          localStorage.setItem(studentStoreKey, JSON.stringify(studentData));
+        }
+      } catch (e) {
+        console.warn("Could not sync assignment deletion to student local storage:", e);
+      }
     },
 
     gradeSubmission(submissionId, payload) {

@@ -5,6 +5,11 @@ export const createTest = (payload) => {
   return api.post("/tests/settings", payload);
 };
 
+// Update an existing test session configuration (Lecturer)
+export const updateTest = (testId, payload) => {
+  return api.patch(`/tests/settings/${testId}`, payload);
+};
+
 // Add a single question to an existing test configuration (Lecturer)
 export const addQuestion = (testId, payload) => {
   return api.post(`/tests/${testId}/questions`, payload);

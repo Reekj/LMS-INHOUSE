@@ -19,8 +19,8 @@
 
         <RouterLink :to="assignmentsRoute" class="course-tab" active-class="active">
           Assignments
-          <span v-if="course.assignmentsCount" class="tab-count danger">
-            {{ course.assignmentsCount }}
+          <span v-if="assignmentsCount" class="tab-count danger">
+            {{ assignmentsCount }}
           </span>
         </RouterLink>
 
@@ -47,7 +47,7 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 
 import { useStudentStore } from "../../stores/student.store";
@@ -58,6 +58,20 @@ const studentStore = useStudentStore();
 const courseId = computed(() => String(route.params.courseId || ""));
 
 const course = computed(() => studentStore.getCourseById(courseId.value));
+
+const assignmentsCount = computed(() => {
+  return studentStore.getAssignmentsByCourse(courseId.value).length;
+});
+
+watch(
+  courseId,
+  (newId) => {
+    if (newId) {
+      studentStore.fetchAssignments(newId);
+    }
+  },
+  { immediate: true }
+);
 
 const materialsRoute = computed(
   () => `/student/my-courses/${courseId.value}/materials`

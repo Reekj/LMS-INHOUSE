@@ -42,17 +42,17 @@
           <form class="profile-form" @submit.prevent="updateProfile">
             <label>
               Department
-              <input v-model.trim="form.department" type="text" disabled />
+              <input v-model.trim="form.department" type="text" disabled readonly />
             </label>
 
             <label>
               Level
-              <input v-model.trim="form.level" type="text" disabled />
+              <input v-model.trim="form.level" type="text" disabled readonly />
             </label>
 
             <label>
               Matric No.
-              <input v-model.trim="form.matricNo" type="text" disabled />
+              <input v-model.trim="form.matricNo" type="text" disabled readonly />
             </label>
 
             <label>
@@ -141,13 +141,14 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch, onMounted } from "vue";
+import { reactive, ref, watch } from "vue";
 import { useAuthStore } from "../../stores/auth.store";
+import { useStudentStore } from "../../stores/student.store";
 import { changePassword as apiChangePassword, uploadPhoto as uploadPhotoApi, removePhoto as removePhotoApi } from "../../api/auth.api";
 import { updateUser } from "../../api/user.api";
 
 const authStore = useAuthStore();
-const STORAGE_KEY = "uniosun_lms_student_settings_v1";
+const studentStore = useStudentStore();
 
 const photoInput = ref(null);
 const profilePhoto = ref("");
@@ -196,47 +197,57 @@ const notifications = reactive([
   },
 ]);
 
-onMounted(() => {
-  if (authStore.user) {
-    const fullName = authStore.user.name || "";
-    const nameParts = fullName.split(" ");
-    form.firstName = nameParts[0] || "";
-    form.lastName = nameParts.slice(1).join(" ") || "";
-    form.email = authStore.user.email || "";
-    form.matricNo = authStore.user.identifier || "";
-    form.department = authStore.user.department || "Computer Science";
-    form.level = authStore.user.level || "100L";
-    form.phone = authStore.user.phone || "";
-    form.initials = authStore.userInitials || "";
-    profilePhoto.value = authStore.user.profileImage || "";
+const getUserStorageKey = () => {
+  const uid = authStore.user?.id || authStore.user?._id || authStore.user?.email || "guest";
+  return `uniosun_lms_student_settings_${uid}`;
+};
+
+function populateFromUser() {
+  const user = authStore.user;
+  if (!user) return;
+
+  const fullName = user.name || "";
+  const nameParts = fullName.trim().split(/\s+/).filter(Boolean);
+  const firstName = user.firstName || nameParts[0] || "";
+  const lastName = user.lastName || (nameParts.length > 1 ? nameParts.slice(1).join(" ") : "");
+
+  // Form fields strictly bind to the currently logged in user
+  form.firstName = firstName;
+  form.lastName = lastName;
+  form.email = user.email || "";
+  form.matricNo = user.identifier || user.matricNo || "";
+  form.department = user.department || "Nursing";
+  form.level = user.level || "100L";
+  form.phone = user.phone || form.phone || "";
+  form.initials = authStore.userInitials || `${firstName[0] || ""}${lastName[0] || ""}`.toUpperCase() || "ST";
+
+  if (user.profileImage) {
+    profilePhoto.value = user.profileImage;
   }
-  loadSettings();
-});
 
-watch(
-  notifications,
-  () => {
-    persistSettings();
-  },
-  { deep: true }
-);
-
-function sanitizeText(value) {
-  return String(value || "").replace(/[<>]/g, "").trim();
+  loadUserSettings();
 }
 
-function loadSettings() {
+function loadUserSettings() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+    // Clear obsolete global key that leaked another user's profile
+    localStorage.removeItem("uniosun_lms_student_settings_v1");
 
-    if (saved.profile) {
-      Object.assign(form, {
-        ...form,
-        ...saved.profile,
-      });
+    const key = getUserStorageKey();
+    const saved = JSON.parse(localStorage.getItem(key) || "{}");
+
+    // Clean up any legacy department from user settings storage
+    if (saved.department) {
+      delete saved.department;
+      localStorage.setItem(key, JSON.stringify(saved));
     }
 
-    if (saved.profilePhoto) {
+    // Only load saved phone if not provided by authStore
+    if (saved.phone && typeof saved.phone === "string" && !form.phone) {
+      form.phone = saved.phone.trim();
+    }
+
+    if (saved.profilePhoto && !profilePhoto.value) {
       profilePhoto.value = saved.profilePhoto;
     }
 
@@ -246,25 +257,39 @@ function loadSettings() {
         if (target) target.enabled = Boolean(savedItem.enabled);
       });
     }
-  } catch {
-    localStorage.removeItem(STORAGE_KEY);
+  } catch (e) {
+    console.error("Error loading student settings:", e);
   }
 }
 
+watch(
+  () => authStore.user,
+  () => {
+    populateFromUser();
+  },
+  { deep: true, immediate: true }
+);
+
+function sanitizeText(value) {
+  return String(value || "").replace(/[<>]/g, "").trim();
+}
+
+watch(
+  notifications,
+  () => {
+    persistSettings();
+  },
+  { deep: true }
+);
+
 function persistSettings() {
+  if (!authStore.user) return;
+
+  const key = getUserStorageKey();
   localStorage.setItem(
-    STORAGE_KEY,
+    key,
     JSON.stringify({
-      profile: {
-        initials: form.initials,
-        department: form.department,
-        level: form.level,
-        matricNo: form.matricNo,
-        firstName: form.firstName,
-        lastName: form.lastName,
-        phone: form.phone,
-        email: form.email,
-      },
+      phone: form.phone,
       profilePhoto: profilePhoto.value,
       notifications,
     })
@@ -358,9 +383,10 @@ async function updateProfile() {
   const lastName = sanitizeText(form.lastName);
   const phone = sanitizeText(form.phone);
   const email = sanitizeText(form.email);
+  const department = authStore.user?.department || form.department || "Nursing";
 
-  if (!firstName || !lastName || !phone || !email) {
-    profileError.value = "Please complete all editable profile fields.";
+  if (!firstName || !lastName || !email) {
+    profileError.value = "Please complete all required profile fields.";
     return;
   }
 
@@ -372,15 +398,17 @@ async function updateProfile() {
   if (import.meta.env.VITE_API_URL && authStore.user) {
     try {
       const payload = {
-        name: `${firstName} ${lastName}`,
+        name: `${firstName} ${lastName}`.trim(),
         email: email,
         phone: phone,
+        department: department,
       };
       const res = await updateUser(authStore.user.id, payload);
       if (res.data && res.data.user) {
         authStore.user.name = res.data.user.name;
         authStore.user.email = res.data.user.email;
         authStore.user.phone = res.data.user.phone || phone;
+        authStore.user.department = res.data.user.department || department;
         localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
       }
     } catch (err) {
@@ -394,7 +422,25 @@ async function updateProfile() {
   form.lastName = lastName;
   form.phone = phone;
   form.email = email;
+  form.department = department;
   form.initials = `${firstName[0] || ""}${lastName[0] || ""}`.toUpperCase();
+
+  if (authStore.user) {
+    authStore.user.name = `${firstName} ${lastName}`.trim();
+    authStore.user.email = email;
+    authStore.user.phone = phone;
+    authStore.user.department = department;
+    localStorage.setItem("uniosun_lms_auth", JSON.stringify({ user: authStore.user, token: authStore.token }));
+  }
+
+  if (studentStore.currentStudent) {
+    studentStore.currentStudent.department = department;
+    studentStore.currentStudent.name = `${firstName} ${lastName}`.trim();
+    studentStore.currentStudent.firstName = firstName;
+    studentStore.currentStudent.initials = form.initials;
+    studentStore.currentStudent.phone = phone;
+    studentStore.persist();
+  }
 
   profileMessage.value = "Profile updated successfully.";
   persistSettings();
@@ -620,10 +666,14 @@ async function changePassword() {
   outline: none;
 }
 
-.profile-form input:disabled {
-  background: #eef2f7;
+.profile-form input:disabled,
+.profile-form input:read-only:disabled {
+  background: #f1f5f9;
   color: #64748b;
+  border-color: #cbd5e1;
   cursor: not-allowed;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .form-actions {

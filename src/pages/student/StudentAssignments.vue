@@ -62,7 +62,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from "vue";
+import { computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ClipboardList, FileCheck2 } from "lucide-vue-next";
 
@@ -72,16 +72,20 @@ const route = useRoute();
 const router = useRouter();
 const studentStore = useStudentStore();
 
-onMounted(async () => {
-  if (courseId.value) {
-    await studentStore.fetchAssignments(courseId.value);
-  }
-});
-
 const courseId = computed(() => String(route.params.courseId || ""));
 
 const assignments = computed(() =>
   studentStore.getAssignmentsByCourse(courseId.value)
+);
+
+watch(
+  courseId,
+  async (newId) => {
+    if (newId) {
+      await studentStore.fetchAssignments(newId);
+    }
+  },
+  { immediate: true }
 );
 
 const previousSubmissions = computed(() =>

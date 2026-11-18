@@ -10,7 +10,7 @@
           <div class="assignment-top">
             <div>
               <h1>{{ assignment.title }}</h1>
-              <p>{{ assignment.courseCode }} · Due {{ assignment.due }}</p>
+              <p>{{ assignment.courseCode || course?.code || "" }} · Due {{ assignment.due }}</p>
             </div>
 
             <span class="status-pill" :class="statusClass">
@@ -216,7 +216,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { FileCheck2, UploadCloud } from "lucide-vue-next";
 
@@ -225,6 +225,17 @@ import { useStudentStore } from "../../stores/student.store";
 const route = useRoute();
 const router = useRouter();
 const studentStore = useStudentStore();
+
+const courseId = computed(() => String(route.params.courseId || ""));
+const assignmentId = computed(() => String(route.params.assignmentId || ""));
+
+const course = computed(() => studentStore.getCourseById(courseId.value));
+const assignment = computed(() =>
+  studentStore.getAssignmentById(assignmentId.value)
+);
+const group = computed(() =>
+  studentStore.getGroupForAssignment(assignmentId.value)
+);
 
 const fileInput = ref(null);
 const selectedFile = ref(null);
@@ -238,7 +249,6 @@ const joinError = ref("");
 
 onMounted(async () => {
   if (assignmentId.value) {
-    // If we don't have assignments list fully fetched from backend, ensure it's loaded
     await studentStore.fetchAssignments(courseId.value);
     
     const currentAssign = studentStore.getAssignmentById(assignmentId.value);
@@ -248,15 +258,17 @@ onMounted(async () => {
   }
 });
 
-const courseId = computed(() => String(route.params.courseId || ""));
-const assignmentId = computed(() => String(route.params.assignmentId || ""));
-
-const assignment = computed(() =>
-  studentStore.getAssignmentById(assignmentId.value)
-);
-
-const group = computed(() =>
-  studentStore.getGroupForAssignment(assignmentId.value)
+watch(
+  assignmentId,
+  async (newId) => {
+    if (newId) {
+      await studentStore.fetchAssignments(courseId.value);
+      const currentAssign = studentStore.getAssignmentById(newId);
+      if (currentAssign && currentAssign.type === "group") {
+        await studentStore.fetchMyGroup(newId);
+      }
+    }
+  }
 );
 
 const previousSubmissions = computed(() =>

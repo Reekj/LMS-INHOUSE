@@ -3,16 +3,27 @@
     <section class="login-card">
       <div class="brand-area">
         <div class="logo-mark">
-          UNIOSUN
+          {{ form.institutionCode.toUpperCase() || "LMS" }}
         </div>
 
         <div>
-          <h1>UNIOSUN LMS</h1>
+          <h1>{{ form.institutionCode.toUpperCase() || "Platform" }} LMS</h1>
           <p>Secure portal access</p>
         </div>
       </div>
 
       <form class="login-form" @submit.prevent="handleLogin">
+        <label>
+          Institution code
+          <input
+            v-model.trim="form.institutionCode"
+            type="text"
+            placeholder="e.g. uniosun"
+            autocomplete="organization"
+          />
+          <small>Leave blank only for platform administrator access.</small>
+        </label>
+
         <label>
           Email Address
           <input
@@ -44,9 +55,7 @@
         </button>
       </form>
 
-      <p class="helper-text">
-        Demo mode: choose a role to enter the relevant portal.
-      </p>
+      
     </section>
   </main>
 </template>
@@ -59,10 +68,10 @@ import { useAuthStore } from "../../stores/auth.store";
 
 const router = useRouter();
 const auth = useAuthStore();
-
 const errorMessage = ref("");
 
 const form = reactive({
+  institutionCode: "uniosun",
   email: "",
   password: "",
 });
@@ -89,6 +98,7 @@ function validateLogin() {
 
 function getRedirectPath(role) {
   const redirects = {
+    platform_admin: "/platform-admin",
     admin: "/admin/dashboard",
     lecturer: "/lecturer/dashboard",
     student: "/student/dashboard",
@@ -110,6 +120,7 @@ async function handleLogin() {
     const role = await auth.login({
       email: sanitizeText(form.email).toLowerCase(),
       password: sanitizeText(form.password),
+      institutionCode: sanitizeText(form.institutionCode).toLowerCase(),
     });
 
     router.replace(getRedirectPath(role));

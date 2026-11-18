@@ -43,3 +43,13 @@ export const submitAssignment = (assignmentId, formData) => {
 export const getCourseAssignments = (courseId) => {
   return api.get(`/assignments/courses/${courseId}`);
 };
+
+// Update an assignment (Lecturer)
+export const updateAssignment = (assignmentId, payload) => {
+  return api.put(`/assignments/${assignmentId}`, payload);
+};
+
+// Delete an assignment (Lecturer)
+export const deleteAssignment = (assignmentId) => {
+  return api.delete(`/assignments/${assignmentId}`);
+};

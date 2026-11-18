@@ -5,7 +5,7 @@
         <div class="brand-top">
           <div class="logo-container">
             <img :src="nextItLogo" alt="LMS Logo" class="logo-img" />
-            <span class="brand-text">University LMS</span>
+            <span class="brand-text">{{ auth.user?.institution?.name || "University LMS" }}</span>
           </div>
 
           <span v-if="isAdmin" class="lms-pill">LMS</span>
