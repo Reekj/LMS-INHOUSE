@@ -20,10 +20,7 @@
 
         <AppSelect v-model="facultyFilter">
           <option value="">All Faculties</option>
-          <option value="Science, Eng & Technology">Science, Eng & Technology</option>
-          <option value="Management & Social Sci.">Management & Social Sci.</option>
-          <option value="Health Sciences">Health Sciences</option>
-          <option value="Humanities & Culture">Humanities & Culture</option>
+          <option v-for="(deps, fac) in facultyDepartments" :key="fac" :value="fac">{{ fac }}</option>
         </AppSelect>
 
         <AppSelect v-model="levelFilter">
@@ -97,6 +94,12 @@
         </div>
 
         <form @submit.prevent="handleSaveCourse">
+          <p v-if="!Object.keys(facultyDepartments).length" class="setup-hint">
+            No faculties or departments are set up yet.
+            <RouterLink to="/admin/faculties">Add them on Faculties &amp; Departments</RouterLink>
+            first.
+          </p>
+
           <div class="form-grid">
             <label class="form-label">
               Course Code
@@ -198,6 +201,7 @@
 
 <script setup>
 import { computed, reactive, ref, onMounted } from "vue";
+import { RouterLink } from "vue-router";
 
 import AppBadge from "../../components/common/AppBadge.vue";
 import AppButton from "../../components/common/AppButton.vue";
@@ -206,6 +210,7 @@ import AppSearch from "../../components/common/AppSearch.vue";
 import AppSelect from "../../components/common/AppSelect.vue";
 import AppToggle from "../../components/common/AppToggle.vue";
 import AppTable from "../../components/tables/AppTable.vue";
+import { useFacultiesStore } from "../../stores/faculties.store";
 import { getCourses, createCourse, editCourse } from "../../api/course.api";
 import { getAllUsers } from "../../api/user.api";
 
@@ -220,47 +225,16 @@ const formError = ref("");
 const courses = ref([]);
 const lecturers = ref([]);
 
-const facultyDepartments = {
-  "Science, Eng & Technology": [
-    "Computer Science",
-    "Electrical Engineering",
-    "Mechanical Engineering",
-    "Mathematics",
-    "Physics",
-  ],
-  "Management & Social Sci.": [
-    "Accounting",
-    "Business Administration",
-    "Economics",
-    "Political Science",
-  ],
-  "Health Sciences": [
-    "Nursing",
-    "Medicine",
-    "Public Health",
-    "Anatomy",
-  ],
-  "Humanities & Culture": [
-    "History",
-    "English",
-    "Linguistics",
-    "French",
-  ],
-  "ICT": [
-    "ICT"
-  ]
-};
+// Set up by the institution's admins on the Faculties & Departments page.
+const facultiesStore = useFacultiesStore();
+const facultyDepartments = computed(() => facultiesStore.facultyDepartments);
 
 function getFacultyFromDepartment(department) {
-  for (const [faculty, deps] of Object.entries(facultyDepartments)) {
-    if (deps.includes(department)) {
-      return faculty;
-    }
-  }
-  return "Science, Eng & Technology"; // Default fallback
+  return facultiesStore.facultyOf(department) || "Not assigned";
 }
 
 onMounted(async () => {
+  await facultiesStore.fetch();
   if (import.meta.env.VITE_API_URL) {
     try {
       const res = await getCourses();
@@ -352,11 +326,11 @@ const courseForm = reactive({
 
 const selectableDepartments = computed(() => {
   if (!courseForm.faculty) return [];
-  return facultyDepartments[courseForm.faculty] || [];
+  return facultyDepartments.value[courseForm.faculty] || [];
 });
 
 function onFacultyChange() {
-  const departments = facultyDepartments[courseForm.faculty] || [];
+  const departments = facultyDepartments.value[courseForm.faculty] || [];
   if (!departments.includes(courseForm.department)) {
     courseForm.department = "";
   }
@@ -432,6 +406,9 @@ function validateCourseForm() {
   if (!sanitizeText(courseForm.code)) return "Course code is required.";
   if (!sanitizeText(courseForm.title)) return "Course title is required.";
   if (!sanitizeText(courseForm.lecturer)) return "Lecturer name is required.";
+  if (!Object.keys(facultyDepartments.value).length) {
+    return "Set up faculties and departments first (Faculties & Departments page).";
+  }
   if (!courseForm.faculty) return "Faculty selection is required.";
   if (!courseForm.department) return "Department selection is required.";
 
@@ -535,6 +512,22 @@ async function handleSaveCourse() {
 </script>
 
 <style scoped>
+.setup-hint {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.setup-hint a {
+  color: #0875f5;
+  font-weight: 800;
+}
+
 .courses-header {
   display: flex;
   align-items: flex-start;
