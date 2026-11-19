@@ -236,7 +236,7 @@ function openNotification(item) {
 async function handleLogout() {
   isProfileOpen.value = false;
   await auth.logout();
-  router.replace("/login");
+  router.replace("/");
 }
 
 let notificationInterval = null;
