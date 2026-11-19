@@ -2,6 +2,7 @@ import {
   LayoutDashboard,
   Users,
   BookOpen,
+  Building2,
   BarChart3,
   Settings,
 } from "lucide-vue-next";
@@ -21,6 +22,11 @@ export const adminMenu = [
     label: "Courses",
     icon: BookOpen,
     path: "/admin/courses",
+  },
+  {
+    label: "Faculties & Departments",
+    icon: Building2,
+    path: "/admin/faculties",
   },
   {
     label: "Analytics",

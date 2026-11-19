@@ -58,6 +58,12 @@
             </thead>
 
             <tbody>
+              <tr v-if="!faculties.length">
+                <td colspan="4" style="text-align: center; color: #94a3b8;">
+                  No faculties yet.
+                  <RouterLink to="/admin/faculties">Set up faculties and departments</RouterLink>
+                </td>
+              </tr>
               <tr
                 v-for="faculty in faculties"
                 :key="faculty.name"
@@ -256,6 +262,7 @@
 
 <script setup>
 import { ref, reactive, onMounted } from "vue";
+import { RouterLink } from "vue-router";
 
 import {
   Users,
@@ -273,41 +280,14 @@ import { createBroadcast, getBroadcasts } from "../../api/broadcast.api";
 import { getDashboardStats } from "../../api/stats.api";
 import { getAllUsers } from "../../api/user.api";
 import { getCourses } from "../../api/course.api";
+import { useFacultiesStore } from "../../stores/faculties.store";
 
 const studentCount = ref(0);
 const lecturerCount = ref(0);
 const courseCount = ref(0);
 
-const faculties = ref([
-  {
-    name: "Science, Eng & Technology",
-    students: "0",
-    courses: 0,
-    adoption: 100,
-    color: "green",
-  },
-  {
-    name: "Management & Social Sci.",
-    students: "0",
-    courses: 0,
-    adoption: 100,
-    color: "orange",
-  },
-  {
-    name: "Health Sciences",
-    students: "0",
-    courses: 0,
-    adoption: 100,
-    color: "green",
-  },
-  {
-    name: "Humanities & Culture",
-    students: "0",
-    courses: 0,
-    adoption: 100,
-    color: "orange",
-  },
-]);
+const faculties = ref([]);
+const facultiesStore = useFacultiesStore();
 
 const activities = ref([]);
 
@@ -331,62 +311,22 @@ onMounted(async () => {
       const users = usersRes.data.users || [];
       const courses = coursesRes.data.courses || [];
 
-      const facultyDepartments = {
-        "Science, Eng & Technology": [
-          "Computer Science",
-          "Electrical Engineering",
-          "Mechanical Engineering",
-          "Mathematics",
-          "Physics",
-        ],
-        "Management & Social Sci.": [
-          "Accounting",
-          "Business Administration",
-          "Economics",
-          "Political Science",
-        ],
-        "Health Sciences": [
-          "Nursing",
-          "Medicine",
-          "Public Health",
-          "Anatomy",
-        ],
-        "Humanities & Culture": [
-          "History",
-          "English",
-          "Linguistics",
-          "French",
-        ],
-        "ICT": [
-          "ICT"
-        ]
-      };
-
-      const getFacultyFromDept = (dept) => {
-        for (const [fac, depts] of Object.entries(facultyDepartments)) {
-          if (depts.includes(dept)) return fac;
-        }
-        return "Science, Eng & Technology";
-      };
-
-      const facCounts = {
-        "Science, Eng & Technology": { students: 0, courses: 0 },
-        "Management & Social Sci.": { students: 0, courses: 0 },
-        "Health Sciences": { students: 0, courses: 0 },
-        "Humanities & Culture": { students: 0, courses: 0 },
-        "ICT": { students: 0, courses: 0 }
-      };
+      // Counts per faculty, from the faculties the institution has set up.
+      await facultiesStore.fetch();
+      const facCounts = Object.fromEntries(
+        facultiesStore.faculties.map((f) => [f.name, { students: 0, courses: 0 }])
+      );
 
       users.forEach(u => {
         if (u.role === "student" && u.department) {
-          const fac = getFacultyFromDept(u.department);
+          const fac = facultiesStore.facultyOf(u.department);
           if (facCounts[fac]) facCounts[fac].students++;
         }
       });
 
       courses.forEach(c => {
         if (c.department) {
-          const fac = getFacultyFromDept(c.department);
+          const fac = facultiesStore.facultyOf(c.department);
           if (facCounts[fac]) facCounts[fac].courses++;
         }
       });
